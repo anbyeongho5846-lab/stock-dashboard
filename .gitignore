@@ -1,0 +1,24 @@
+# 개인 데이터 (클라우드 DB로 대체)
+portfolio.json
+
+# 환경변수 / 시크릿
+.env
+.streamlit/secrets.toml
+
+# Python 캐시
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# 로그
+*.log
+watchdog.log
+
+# Windows
+Thumbs.db
+desktop.ini
+
+# IDE
+.vscode/
+.idea/

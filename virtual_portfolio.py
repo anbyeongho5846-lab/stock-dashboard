@@ -1,6 +1,8 @@
 """
 가상투자 포트폴리오 관리 모듈
-데이터 저장: portfolio.json (같은 폴더)
+데이터 저장: 클라우드(Supabase) 또는 로컬(portfolio.json)
+- Streamlit secrets에 [supabase] 설정 시 → Supabase DB 사용
+- 없으면 → 로컬 portfolio.json 사용 (개발 환경)
 """
 
 import json
@@ -41,7 +43,37 @@ def _default(capital: float) -> dict:
     }
 
 
+def _get_supabase():
+    """
+    Supabase 클라이언트 반환.
+    Streamlit secrets에 [supabase] 설정이 없으면 None 반환.
+    """
+    try:
+        import streamlit as st
+        url = st.secrets["supabase"]["url"]
+        key = st.secrets["supabase"]["key"]
+        from supabase import create_client
+        return create_client(url, key)
+    except Exception:
+        return None
+
+
 def load_portfolio() -> dict:
+    """포트폴리오 로드 — Supabase 우선, 없으면 로컬 파일."""
+    sb = _get_supabase()
+    if sb:
+        try:
+            res = sb.table("portfolio").select("data").eq("id", "default").execute()
+            if res.data:
+                return res.data[0]["data"]
+            # DB에 행이 없으면 기본값 생성
+            p = _default(10_000_000)
+            sb.table("portfolio").insert({"id": "default", "data": p}).execute()
+            return p
+        except Exception:
+            pass
+
+    # 로컬 파일 (개발 환경 fallback)
     if PORTFOLIO_FILE.exists():
         try:
             return json.loads(PORTFOLIO_FILE.read_text(encoding="utf-8"))
@@ -53,6 +85,16 @@ def load_portfolio() -> dict:
 
 
 def save_portfolio(p: dict) -> None:
+    """포트폴리오 저장 — Supabase 우선, 없으면 로컬 파일."""
+    sb = _get_supabase()
+    if sb:
+        try:
+            sb.table("portfolio").upsert({"id": "default", "data": p}).execute()
+            return
+        except Exception:
+            pass
+
+    # 로컬 파일 (개발 환경 fallback)
     PORTFOLIO_FILE.write_text(
         json.dumps(p, ensure_ascii=False, indent=2), encoding="utf-8"
     )

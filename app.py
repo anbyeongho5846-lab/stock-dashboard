@@ -303,8 +303,8 @@ def cached_fundamental(ticker: str, is_kr: bool, years: int):
     from fundamental import fetch_all
     try:
         return fetch_all(ticker, is_kr, years)
-    except Exception as e:
-        return {"__error__": str(e)}
+    except Exception:
+        return None
 
 
 @st.cache_data(ttl=300)
@@ -783,27 +783,26 @@ def show_fundamental():
     with st.spinner(f"[{ticker}] 기업 정보 수집 중..."):
         d = cached_fundamental(ticker.strip(), is_kr, years)
 
-    if d is None or "__error__" in (d or {}):
-        err_msg = d.get("__error__", "알 수 없는 오류") if d else "None 반환"
-        st.error(f"데이터를 가져오지 못했습니다.\n\n`오류: {err_msg}`")
+    if d is None:
+        st.error("데이터를 가져오지 못했습니다. 종목 코드를 확인하세요.")
         return
 
     info = d["info"]
     name = info.get("longName") or info.get("shortName") or d["symbol"]
-    sector_str = info.get("sector", "")
+    sector_str   = info.get("sector", "")
     industry_str = info.get("industry", "")
+    sub_parts = [f'<code style="background:#0e1117; padding:2px 8px; border-radius:4px;">{d["symbol"]}</code>']
+    if sector_str:   sub_parts.append(sector_str)
+    if industry_str: sub_parts.append(industry_str)
+    sub_html = "&nbsp;&nbsp;".join(sub_parts)
 
-    st.markdown(f"""
-    <div style="background:#1a2035; border-radius:12px; padding:16px 20px; margin-bottom:16px;
-                border-left: 4px solid #3b82f6;">
-        <div style="font-size:1.3rem; font-weight:700; color:#e2e8f0;">{name}</div>
-        <div style="font-size:0.82rem; color:#718096; margin-top:4px;">
-            <code style="background:#0e1117; padding:2px 8px; border-radius:4px;">{d['symbol']}</code>
-            {'&nbsp;&nbsp;' + sector_str if sector_str else ''}
-            {'&nbsp;›&nbsp;' + industry_str if industry_str else ''}
-        </div>
-    </div>
-    """, unsafe_allow_html=True)
+    st.markdown(
+        f'<div style="background:#1a2035; border-radius:12px; padding:16px 20px; margin-bottom:16px; border-left:4px solid #3b82f6;">'
+        f'<div style="font-size:1.3rem; font-weight:700; color:#e2e8f0;">{name}</div>'
+        f'<div style="font-size:0.82rem; color:#718096; margin-top:4px;">{sub_html}</div>'
+        f'</div>',
+        unsafe_allow_html=True,
+    )
 
     # yfinance 버전에 따라 필드명이 다를 수 있어 여러 키 시도
     cur_price = (info.get("currentPrice")

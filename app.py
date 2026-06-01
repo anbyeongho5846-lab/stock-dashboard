@@ -298,13 +298,14 @@ def cached_stock(ticker: str, is_kr: bool, days: int) -> pd.DataFrame:
         return pd.DataFrame()
 
 
-@st.cache_data(ttl=86400)
+@st.cache_data(ttl=300)   # 디버그: ttl 5분으로 단축
 def cached_fundamental(ticker: str, is_kr: bool, years: int):
+    import traceback
     from fundamental import fetch_all
     try:
         return fetch_all(ticker, is_kr, years)
-    except Exception:
-        return None
+    except Exception as e:
+        return {"__error__": f"{type(e).__name__}: {e}\n{traceback.format_exc()}"}
 
 
 @st.cache_data(ttl=300)
@@ -783,8 +784,9 @@ def show_fundamental():
     with st.spinner(f"[{ticker}] 기업 정보 수집 중..."):
         d = cached_fundamental(ticker.strip(), is_kr, years)
 
-    if d is None:
-        st.error("데이터를 가져오지 못했습니다. 종목 코드를 확인하세요.")
+    if d is None or isinstance(d, dict) and "__error__" in d:
+        err = d.get("__error__", "None 반환") if d else "None 반환"
+        st.error(f"오류 발생:\n```\n{err}\n```")
         return
 
     info = d["info"]

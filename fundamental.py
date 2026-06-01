@@ -75,7 +75,7 @@ def _fetch_kr(ticker: str, years: int) -> dict:
     except Exception:
         pass
 
-    # ── 가격 이력 (pykrx → Naver 엔드포인트, 클라우드에서 작동) ───────────
+    # ── 가격 이력 (1차: pykrx, 2차: yfinance .KS/.KQ) ───────────────────
     hist = pd.DataFrame()
     try:
         df = krx.get_market_ohlcv_by_date(start_str, end_str, ticker)
@@ -88,6 +88,24 @@ def _fetch_kr(ticker: str, years: int) -> dict:
             hist = df[["Open", "High", "Low", "Close", "Volume"]].dropna()
     except Exception:
         pass
+
+    # pykrx 실패 시 yfinance fallback
+    if hist.empty:
+        start_yf = (today - timedelta(days=years * 365)).strftime("%Y-%m-%d")
+        end_yf   = today.strftime("%Y-%m-%d")
+        for suffix in [".KS", ".KQ"]:
+            try:
+                df = yf.download(f"{ticker}{suffix}", start=start_yf, end=end_yf,
+                                 auto_adjust=True, progress=False)
+                if isinstance(df.columns, pd.MultiIndex):
+                    df.columns = df.columns.get_level_values(0)
+                df.index = pd.to_datetime(df.index)
+                result = df[["Open", "High", "Low", "Close", "Volume"]].dropna()
+                if not result.empty:
+                    hist = result
+                    break
+            except Exception:
+                continue
 
     # ── 현재가 / 시가총액 ──────────────────────────────────────────────────
     if not hist.empty:

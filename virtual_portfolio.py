@@ -109,9 +109,12 @@ def reset_portfolio(capital: float) -> dict:
 # ── 시세 조회 ─────────────────────────────────────────────────────────────────
 
 def get_current_price(ticker: str, market: str) -> float | None:
-    """현재가 조회 (국내: pykrx, 미국: yfinance)"""
-    try:
-        if market.lower() == "kr":
+    """현재가 조회 (국내: pykrx → yfinance .KS fallback, 미국: yfinance)"""
+    import yfinance as yf
+
+    if market.lower() == "kr":
+        # 1차: pykrx (로컬 환경)
+        try:
             from pykrx import stock as krx
             for i in range(7):
                 d = (datetime.today() - timedelta(days=i)).strftime("%Y%m%d")
@@ -119,13 +122,23 @@ def get_current_price(ticker: str, market: str) -> float | None:
                 if not df.empty:
                     col = "종가" if "종가" in df.columns else df.columns[-2]
                     return float(df[col].iloc[-1])
-        else:
-            import yfinance as yf
-            hist = yf.Ticker(ticker).history(period="3d")
+        except Exception:
+            pass
+        # 2차: yfinance .KS / .KQ (클라우드 환경)
+        for suffix in [".KS", ".KQ"]:
+            try:
+                hist = yf.Ticker(f"{ticker}{suffix}").history(period="5d")
+                if not hist.empty:
+                    return float(hist["Close"].iloc[-1])
+            except Exception:
+                continue
+    else:
+        try:
+            hist = yf.Ticker(ticker).history(period="5d")
             if not hist.empty:
                 return float(hist["Close"].iloc[-1])
-    except Exception:
-        pass
+        except Exception:
+            pass
     return None
 
 

@@ -28,14 +28,35 @@ def fetch_us(ticker: str, start: str, end: str) -> pd.DataFrame:
 
 
 def fetch_kr(ticker: str, start: str, end: str) -> pd.DataFrame:
-    from pykrx import stock as krx
-    s = start.replace("-", "")
-    e = end.replace("-", "")
-    df = krx.get_market_ohlcv_by_date(s, e, ticker)
-    df = df.rename(columns={"시가": "Open", "고가": "High", "저가": "Low",
-                             "종가": "Close", "거래량": "Volume"})
-    df.index = pd.to_datetime(df.index)
-    return df[["Open", "High", "Low", "Close", "Volume"]].dropna()
+    # 1차: pykrx (로컬에서 정확한 KRX 데이터)
+    try:
+        from pykrx import stock as krx
+        s = start.replace("-", "")
+        e = end.replace("-", "")
+        df = krx.get_market_ohlcv_by_date(s, e, ticker)
+        if not df.empty:
+            df = df.rename(columns={"시가": "Open", "고가": "High", "저가": "Low",
+                                     "종가": "Close", "거래량": "Volume"})
+            df.index = pd.to_datetime(df.index)
+            return df[["Open", "High", "Low", "Close", "Volume"]].dropna()
+    except Exception:
+        pass
+
+    # 2차: yfinance .KS / .KQ (클라우드에서 pykrx 차단 시 fallback)
+    import yfinance as yf
+    for suffix in [".KS", ".KQ"]:
+        try:
+            df = yf.download(f"{ticker}{suffix}", start=start, end=end,
+                             auto_adjust=True, progress=False)
+            if isinstance(df.columns, pd.MultiIndex):
+                df.columns = df.columns.get_level_values(0)
+            df.index = pd.to_datetime(df.index)
+            result = df[["Open", "High", "Low", "Close", "Volume"]].dropna()
+            if not result.empty:
+                return result
+        except Exception:
+            continue
+    return pd.DataFrame()
 
 
 # ── 지표 계산 ─────────────────────────────────────────────────────────────────

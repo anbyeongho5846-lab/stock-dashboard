@@ -49,56 +49,70 @@ def _fmt_val(val: float) -> str:
 
 def fetch_all(ticker: str, kr: bool, years: int) -> dict:
     # 국내 종목: .KS(KOSPI) 먼저 시도, 실패 시 .KQ(KOSDAQ) 시도
-    symbols = []
     if kr and not ticker.endswith((".KS", ".KQ")):
         symbols = [f"{ticker}.KS", f"{ticker}.KQ"]
     else:
         symbols = [ticker]
 
-    info, fin, bal, cf, hist, symbol = {}, None, None, None, None, symbols[0]
+    info: dict = {}
+    symbol = symbols[0]
 
+    # ── 1. info 조회 (심볼 후보 순서대로 시도) ──────────────────────────────
     for sym in symbols:
         try:
             t = yf.Ticker(sym)
-            _info = t.info or {}
-            # info가 비어있지 않으면 이 심볼 사용
-            if _info and (_info.get("regularMarketPrice") or _info.get("currentPrice")
-                          or _info.get("shortName") or _info.get("longName")):
+            _info = {}
+            try:
+                _info = t.info or {}
+            except Exception:
+                pass
+
+            # fast_info로 현재가 보완 (yfinance 1.x에서 info에 currentPrice 없는 경우)
+            try:
+                fast = t.fast_info
+                if not _info.get("currentPrice") and not _info.get("regularMarketPrice"):
+                    lp = getattr(fast, "last_price", None)
+                    if lp:
+                        _info["currentPrice"] = float(lp)
+                if not _info.get("marketCap"):
+                    mc = getattr(fast, "market_cap", None)
+                    if mc:
+                        _info["marketCap"] = float(mc)
+            except Exception:
+                pass
+
+            if _info:
                 info   = _info
                 symbol = sym
                 break
-            elif _info:
-                info   = _info
-                symbol = sym
         except Exception:
             continue
 
-    # 나머지 데이터는 확정된 심볼로 조회
-    try:
-        t = yf.Ticker(symbol)
-    except Exception:
-        t = None
+    # ── 2. 재무 데이터 조회 ──────────────────────────────────────────────────
+    t = yf.Ticker(symbol)
 
-    if t:
-        if not info:
-            try:   info = t.info or {}
-            except Exception: info = {}
+    try:   fin  = t.financials
+    except Exception: fin = pd.DataFrame()
 
-        try:   fin  = t.financials
-        except Exception: fin = pd.DataFrame()
+    try:   bal  = t.balance_sheet
+    except Exception: bal = pd.DataFrame()
 
-        try:   bal  = t.balance_sheet
-        except Exception: bal = pd.DataFrame()
+    try:   cf   = t.cash_flow
+    except Exception: cf = pd.DataFrame()
 
-        try:   cf   = t.cash_flow
-        except Exception: cf = pd.DataFrame()
+    try:   hist = t.history(period=f"{years}y")
+    except Exception: hist = pd.DataFrame()
 
-        try:   hist = t.history(period=f"{years}y")
-        except Exception: hist = pd.DataFrame()
+    # ── 3. history로 현재가 / 종목명 보완 ────────────────────────────────────
+    if hist is not None and not hist.empty:
+        if not info.get("currentPrice") and not info.get("regularMarketPrice"):
+            info["currentPrice"] = float(hist["Close"].iloc[-1])
+        if not info.get("shortName") and not info.get("longName"):
+            info["shortName"] = symbol
 
-    # 최소한 심볼 정보라도 있으면 반환
+    # ── 4. 최소 데이터라도 있으면 반환 ──────────────────────────────────────
     if info or (hist is not None and not hist.empty):
-        return dict(info=info or {}, financials=fin, balance=bal, cashflow=cf,
+        return dict(info=info, financials=fin, balance=bal, cashflow=cf,
                     history=hist, symbol=symbol, ticker=ticker)
 
     raise ValueError(f"데이터를 가져오지 못했습니다: {ticker}")

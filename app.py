@@ -804,7 +804,18 @@ def show_fundamental():
     </div>
     """, unsafe_allow_html=True)
 
-    cur_price = info.get("currentPrice") or info.get("regularMarketPrice")
+    # yfinance 버전에 따라 필드명이 다를 수 있어 여러 키 시도
+    cur_price = (info.get("currentPrice")
+                 or info.get("regularMarketPrice")
+                 or info.get("previousClose"))
+    # history에서도 가져오기 (최후 fallback)
+    if not cur_price:
+        try:
+            _h = d.get("history")
+            if _h is not None and not _h.empty:
+                cur_price = float(_h["Close"].iloc[-1])
+        except Exception:
+            pass
     mkt_cap   = info.get("marketCap")
     per  = info.get("trailingPE") or info.get("forwardPE")
     pbr  = info.get("priceToBook")

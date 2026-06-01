@@ -10,7 +10,7 @@
 
 import argparse
 import sys
-from datetime import datetime
+from datetime import datetime, timedelta
 
 import pandas as pd
 import plotly.graph_objects as go
@@ -47,8 +47,95 @@ def _fmt_val(val: float) -> str:
 
 # ── 데이터 수집 ───────────────────────────────────────────────────────────────
 
+def _fetch_kr(ticker: str, years: int) -> dict:
+    """국내 종목: pykrx(Naver엔드포인트) + 네이버금융 스크래핑."""
+    import re as _re
+    import requests as _req
+    from pykrx import stock as krx
+
+    today    = datetime.today()
+    end_str  = today.strftime("%Y%m%d")
+    start_str= (today - timedelta(days=years * 365)).strftime("%Y%m%d")
+    week_ago = (today - timedelta(days=7)).strftime("%Y%m%d")
+
+    info: dict = {"shortName": ticker}
+
+    # ── 종목명 (네이버금융 종목 페이지) ────────────────────────────────────
+    try:
+        r = _req.get(
+            "https://finance.naver.com/item/main.naver",
+            params={"code": ticker},
+            headers={"User-Agent": "Mozilla/5.0"},
+            timeout=8,
+        )
+        text = r.content.decode("utf-8", errors="replace")
+        m = _re.search(r"<title>([^<:(]+)", text)
+        if m:
+            info["shortName"] = m.group(1).strip()
+    except Exception:
+        pass
+
+    # ── 가격 이력 (pykrx → Naver 엔드포인트, 클라우드에서 작동) ───────────
+    hist = pd.DataFrame()
+    try:
+        df = krx.get_market_ohlcv_by_date(start_str, end_str, ticker)
+        if not df.empty:
+            df = df.rename(columns={
+                "시가": "Open", "고가": "High", "저가": "Low",
+                "종가": "Close", "거래량": "Volume",
+            })
+            df.index = pd.to_datetime(df.index)
+            hist = df[["Open", "High", "Low", "Close", "Volume"]].dropna()
+    except Exception:
+        pass
+
+    # ── 현재가 / 시가총액 ──────────────────────────────────────────────────
+    if not hist.empty:
+        info["currentPrice"] = float(hist["Close"].iloc[-1])
+
+    try:
+        df_cap = krx.get_market_cap_by_date(week_ago, end_str, ticker)
+        if not df_cap.empty:
+            last = df_cap.iloc[-1]
+            if not info.get("currentPrice"):
+                info["currentPrice"] = float(last.get("종가", 0))
+            info["marketCap"] = float(last.get("시가총액", 0))
+    except Exception:
+        pass
+
+    # ── PER / PBR / EPS ───────────────────────────────────────────────────
+    try:
+        df_f = krx.get_market_fundamental_by_date(week_ago, end_str, ticker)
+        if not df_f.empty:
+            lf = df_f.iloc[-1]
+            per = float(lf.get("PER", 0))
+            pbr = float(lf.get("PBR", 0))
+            eps = float(lf.get("EPS", 0))
+            if per: info["trailingPE"]  = per
+            if pbr: info["priceToBook"] = pbr
+            if eps: info["trailingEps"] = eps
+    except Exception:
+        pass
+
+    return dict(
+        info=info,
+        financials=pd.DataFrame(),
+        balance=pd.DataFrame(),
+        cashflow=pd.DataFrame(),
+        history=hist,
+        symbol=ticker,
+        ticker=ticker,
+    )
+
+
 def fetch_all(ticker: str, kr: bool, years: int) -> dict:
-    # 국내 종목: .KS(KOSPI) 먼저 시도, 실패 시 .KQ(KOSDAQ) 시도
+    # ── 국내 종목: pykrx + 네이버금융 ────────────────────────────────────
+    if kr:
+        result = _fetch_kr(ticker, years)
+        if result["info"] or not result["history"].empty:
+            return result
+
+    # ── 미국 종목 (또는 국내 fallback): yfinance ─────────────────────────
     if kr and not ticker.endswith((".KS", ".KQ")):
         symbols = [f"{ticker}.KS", f"{ticker}.KQ"]
     else:
@@ -57,17 +144,14 @@ def fetch_all(ticker: str, kr: bool, years: int) -> dict:
     info: dict = {}
     symbol = symbols[0]
 
-    # ── 1. info 조회 (심볼 후보 순서대로 시도) ──────────────────────────────
     for sym in symbols:
         try:
-            t = yf.Ticker(sym)
+            t   = yf.Ticker(sym)
             _info = {}
             try:
                 _info = t.info or {}
             except Exception:
                 pass
-
-            # fast_info로 현재가 보완 (yfinance 1.x에서 info에 currentPrice 없는 경우)
             try:
                 fast = t.fast_info
                 if not _info.get("currentPrice") and not _info.get("regularMarketPrice"):
@@ -80,7 +164,6 @@ def fetch_all(ticker: str, kr: bool, years: int) -> dict:
                         _info["marketCap"] = float(mc)
             except Exception:
                 pass
-
             if _info:
                 info   = _info
                 symbol = sym
@@ -88,29 +171,22 @@ def fetch_all(ticker: str, kr: bool, years: int) -> dict:
         except Exception:
             continue
 
-    # ── 2. 재무 데이터 조회 ──────────────────────────────────────────────────
     t = yf.Ticker(symbol)
-
     try:   fin  = t.financials
     except Exception: fin = pd.DataFrame()
-
     try:   bal  = t.balance_sheet
     except Exception: bal = pd.DataFrame()
-
     try:   cf   = t.cash_flow
     except Exception: cf = pd.DataFrame()
-
     try:   hist = t.history(period=f"{years}y")
     except Exception: hist = pd.DataFrame()
 
-    # ── 3. history로 현재가 / 종목명 보완 ────────────────────────────────────
     if hist is not None and not hist.empty:
         if not info.get("currentPrice") and not info.get("regularMarketPrice"):
             info["currentPrice"] = float(hist["Close"].iloc[-1])
         if not info.get("shortName") and not info.get("longName"):
             info["shortName"] = symbol
 
-    # ── 4. 최소 데이터라도 있으면 반환 ──────────────────────────────────────
     if info or (hist is not None and not hist.empty):
         return dict(info=info, financials=fin, balance=bal, cashflow=cf,
                     history=hist, symbol=symbol, ticker=ticker)

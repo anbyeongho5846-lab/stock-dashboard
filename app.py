@@ -274,16 +274,22 @@ def _color_pnl(val: str) -> str:
 
 # ── 공통 캐싱 함수 ────────────────────────────────────────────────────────────
 
-@st.cache_data(ttl=300)
+@st.cache_data(ttl=1800)   # 30분 캐시 — 네이버 요청 빈도 최소화
 def cached_rankings(market: str):
     from ranking import fetch_rankings
-    return fetch_rankings(market)
+    try:
+        return fetch_rankings(market)
+    except Exception:
+        return {}
 
 
-@st.cache_data(ttl=300)
+@st.cache_data(ttl=1800)   # 30분 캐시
 def cached_sector(type_: str):
     from sector import fetch_sector
-    return fetch_sector(type_)
+    try:
+        return fetch_sector(type_)
+    except Exception:
+        return pd.DataFrame()
 
 
 @st.cache_data(ttl=3600)
@@ -298,14 +304,13 @@ def cached_stock(ticker: str, is_kr: bool, days: int) -> pd.DataFrame:
         return pd.DataFrame()
 
 
-@st.cache_data(ttl=300)   # 디버그: ttl 5분으로 단축
+@st.cache_data(ttl=3600)
 def cached_fundamental(ticker: str, is_kr: bool, years: int):
-    import traceback
     from fundamental import fetch_all
     try:
         return fetch_all(ticker, is_kr, years)
-    except Exception as e:
-        return {"__error__": f"{type(e).__name__}: {e}\n{traceback.format_exc()}"}
+    except Exception:
+        return None
 
 
 @st.cache_data(ttl=300)
@@ -784,9 +789,8 @@ def show_fundamental():
     with st.spinner(f"[{ticker}] 기업 정보 수집 중..."):
         d = cached_fundamental(ticker.strip(), is_kr, years)
 
-    if d is None or isinstance(d, dict) and "__error__" in d:
-        err = d.get("__error__", "None 반환") if d else "None 반환"
-        st.error(f"오류 발생:\n```\n{err}\n```")
+    if d is None:
+        st.error("데이터를 가져오지 못했습니다. 종목 코드를 확인하세요.")
         return
 
     info = d["info"]

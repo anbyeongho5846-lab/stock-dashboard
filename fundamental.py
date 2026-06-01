@@ -48,17 +48,60 @@ def _fmt_val(val: float) -> str:
 # ── 데이터 수집 ───────────────────────────────────────────────────────────────
 
 def fetch_all(ticker: str, kr: bool, years: int) -> dict:
-    symbol = _ticker_symbol(ticker, kr)
-    t = yf.Ticker(symbol)
+    # 국내 종목: .KS(KOSPI) 먼저 시도, 실패 시 .KQ(KOSDAQ) 시도
+    symbols = []
+    if kr and not ticker.endswith((".KS", ".KQ")):
+        symbols = [f"{ticker}.KS", f"{ticker}.KQ"]
+    else:
+        symbols = [ticker]
 
-    info      = t.info or {}
-    fin       = t.financials         # 연간 손익계산서
-    bal       = t.balance_sheet      # 연간 대차대조표
-    cf        = t.cash_flow          # 연간 현금흐름표
-    hist      = t.history(period=f"{years}y")
+    info, fin, bal, cf, hist, symbol = {}, None, None, None, None, symbols[0]
 
-    return dict(info=info, financials=fin, balance=bal, cashflow=cf,
-                history=hist, symbol=symbol, ticker=ticker)
+    for sym in symbols:
+        try:
+            t = yf.Ticker(sym)
+            _info = t.info or {}
+            # info가 비어있지 않으면 이 심볼 사용
+            if _info and (_info.get("regularMarketPrice") or _info.get("currentPrice")
+                          or _info.get("shortName") or _info.get("longName")):
+                info   = _info
+                symbol = sym
+                break
+            elif _info:
+                info   = _info
+                symbol = sym
+        except Exception:
+            continue
+
+    # 나머지 데이터는 확정된 심볼로 조회
+    try:
+        t = yf.Ticker(symbol)
+    except Exception:
+        t = None
+
+    if t:
+        if not info:
+            try:   info = t.info or {}
+            except Exception: info = {}
+
+        try:   fin  = t.financials
+        except Exception: fin = pd.DataFrame()
+
+        try:   bal  = t.balance_sheet
+        except Exception: bal = pd.DataFrame()
+
+        try:   cf   = t.cash_flow
+        except Exception: cf = pd.DataFrame()
+
+        try:   hist = t.history(period=f"{years}y")
+        except Exception: hist = pd.DataFrame()
+
+    # 최소한 심볼 정보라도 있으면 반환
+    if info or (hist is not None and not hist.empty):
+        return dict(info=info or {}, financials=fin, balance=bal, cashflow=cf,
+                    history=hist, symbol=symbol, ticker=ticker)
+
+    raise ValueError(f"데이터를 가져오지 못했습니다: {ticker}")
 
 
 # ── 출력 ─────────────────────────────────────────────────────────────────────

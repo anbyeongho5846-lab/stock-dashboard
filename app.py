@@ -303,8 +303,8 @@ def cached_fundamental(ticker: str, is_kr: bool, years: int):
     from fundamental import fetch_all
     try:
         return fetch_all(ticker, is_kr, years)
-    except Exception:
-        return None
+    except Exception as e:
+        return {"__error__": str(e)}
 
 
 @st.cache_data(ttl=300)
@@ -783,8 +783,9 @@ def show_fundamental():
     with st.spinner(f"[{ticker}] 기업 정보 수집 중..."):
         d = cached_fundamental(ticker.strip(), is_kr, years)
 
-    if d is None:
-        st.error("데이터를 가져오지 못했습니다. 종목 코드를 확인하세요.")
+    if d is None or "__error__" in (d or {}):
+        err_msg = d.get("__error__", "알 수 없는 오류") if d else "None 반환"
+        st.error(f"데이터를 가져오지 못했습니다.\n\n`오류: {err_msg}`")
         return
 
     info = d["info"]

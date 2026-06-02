@@ -14,18 +14,20 @@ https://stock-dashboard-xsn49fz4eyx8qgcv6i3lcp.streamlit.app
 ## 파일 구조
 ```
 stock_analyzer/
-├── app.py                  # 메인 Streamlit 앱 (9개 페이지 + 라우팅)
+├── app.py                  # 메인 Streamlit 앱 (11개 페이지 + 라우팅)
 ├── analyzer.py             # 종목 분석 (캔들차트 + 기술지표)
 ├── backtester.py           # 백테스팅
 ├── compare.py              # 전략 비교
 ├── optimizer.py            # MA 최적화
-├── fundamental.py          # 기업 기본 분석 (DART 추가 예정)
+├── fundamental.py          # 기업 기본 분석 (yfinance/pykrx)
+├── dart_screener.py        # DART 기본적 분석 스크리너 (EPS/BPS/PER/PBR 밴드)
 ├── ownership.py            # 투자자 동향
 ├── ranking.py              # 시장 현황 (네이버 스크래핑)
 ├── sector.py               # 섹터/테마 (네이버 스크래핑)
 ├── scanner.py              # 종목 스캐너
 ├── virtual_portfolio.py    # 가상 투자 (Supabase 저장)
 ├── kr_tickers.json         # 국내 종목 DB (KOSPI+KOSDAQ 3,957개)
+├── dart_corp_codes.json    # DART 고유번호 캐시 (자동생성, 7일 TTL)
 ├── requirements.txt        # Python 패키지
 ├── runtime.txt             # python-3.11 (클라우드 버전 고정)
 └── .streamlit/
@@ -45,6 +47,7 @@ stock_analyzer/
 | 👥 투자자 동향 | show_ownership() | pykrx |
 | 🗂️ 섹터/테마 | show_sector() | 네이버 스크래핑 (30분 캐시) |
 | 📡 종목 스캐너 | show_scanner() | yfinance |
+| 📊 DART 스크리너 | show_dart_screener() | Open DART API + yfinance |
 | 💰 가상 투자 | show_virtual_portfolio() | Supabase + yfinance |
 
 ## 중요 설정값 (app.py)
@@ -83,8 +86,21 @@ url = "https://xxxx.supabase.co"
 key = "eyJhbGciOi..."
 
 [dart]
-api_key = "..."   # 아직 미설정 — DART 스크리너 추가 시 필요
+api_key = "..."   # https://opendart.fss.or.kr 에서 발급
 ```
+
+## DART 스크리너 캐시 구조
+- `dart_corp_codes.json`: DART 고유번호 매핑 (7일 TTL, 자동 갱신)
+  - key: 종목코드(6자리), value: DART corp_code(8자리)
+- Streamlit `@st.cache_data(ttl=3600)`: 재무/주가 데이터 1시간 캐시
+
+## DART API 엔드포인트 (dart_screener.py)
+- `corpCode.xml` — 전체 기업 고유번호 (ZIP 다운로드)
+- `fnlttSinglAcntAll.json` — 단일회사 전체 재무제표 (연결/별도)
+  - `fs_div=CFS` 우선, 없으면 `OFS` fallback
+  - `reprt_code=11011` 사업보고서만 사용
+  - 1회 호출로 당기/전기/전전기 3년치 추출 (thstrm/frmtrm/bfefrmtrm)
+- `company.json` — 기업명 조회
 
 ## Supabase 테이블 구조
 ```sql
@@ -113,10 +129,8 @@ git push
   → 예정: Open DART API 연동으로 해결
 
 ## 다음 작업 (Next Task)
-**기본적 분석 스크리너 추가** (`dart_screener.py` + 새 페이지)
-- Open DART API로 분기별 EPS/BPS 수집
-- yfinance로 분기별 주가 수집
-- 역사적 PER/PBR 밴드 계산
-- 저평가 종목 필터링 및 점수화
-- DART API 키 필요: https://opendart.fss.or.kr
-- Streamlit secrets에 [dart] api_key 추가 필요
+**DART 스크리너 배포 후 개선 아이디어**
+- 분기 데이터 지원 (reprt_code 11012/11013/11014)
+- 배당수익률 필터 추가 (DART 배당 API)
+- 시가총액 구간 필터 (대형주/중형주/소형주)
+- PDF 리포트 다운로드

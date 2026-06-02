@@ -109,12 +109,17 @@ def corp_cache_exists() -> bool:
 # 재무 데이터 수집
 # ─────────────────────────────────────────────────────────────────────────────
 
-_EPS_KEYS  = ("기본주당이익(손실)", "주당순이익", "기본주당순이익", "기본주당이익",
-              "주당이익", "BasicEarnings")
-_BPS_KEYS  = ("주당순자산가치", "주당순자산", "주당장부가치")
-_REV_KEYS  = ("매출액", "수익(매출액)", "영업수익", "매출")
-_OP_KEYS   = ("영업이익", "영업이익(손실)", "영업손익")
-_NET_KEYS  = ("당기순이익", "당기순이익(손실)", "연결당기순이익")
+_EPS_KEYS    = ("기본주당이익(손실)", "주당순이익", "기본주당순이익", "기본주당이익",
+                "주당이익", "BasicEarnings", "EarningsPerShare")
+_BPS_KEYS    = ("주당순자산가치", "주당순자산", "주당장부가치",
+                "지배기업소유주에귀속되는주당순자산", "주당자본금",
+                "BookValuePerShare")
+_EQUITY_KEYS = ("지배기업 소유주지분", "지배기업소유주지분",
+                "주주에귀속되는자본", "자본총계",
+                "StockholdersEquity", "TotalEquity")
+_REV_KEYS    = ("매출액", "수익(매출액)", "영업수익", "매출")
+_OP_KEYS     = ("영업이익", "영업이익(손실)", "영업손익")
+_NET_KEYS    = ("당기순이익", "당기순이익(손실)", "연결당기순이익")
 
 
 def _dart_request(api_key: str, endpoint: str, **params) -> list[dict]:
@@ -197,6 +202,7 @@ def fetch_financials_for_year(api_key: str, corp_code: str,
         for y, amt_f, _ in year_slots:
             eps     = _extract_field(items, amt_f, *_EPS_KEYS)
             bps     = _extract_field(items, amt_f, *_BPS_KEYS)
+            equity  = _extract_field(items, amt_f, *_EQUITY_KEYS)
             revenue = _extract_field(items, amt_f, *_REV_KEYS)
             op_inc  = _extract_field(items, amt_f, *_OP_KEYS)
             net_inc = _extract_field(items, amt_f, *_NET_KEYS)
@@ -204,7 +210,7 @@ def fetch_financials_for_year(api_key: str, corp_code: str,
             if any(v is not None for v in [eps, revenue, op_inc, net_inc]):
                 rows.append(dict(
                     year=y, fs_div=fs_div,
-                    eps=eps, bps=bps,
+                    eps=eps, bps=bps, equity=equity,
                     revenue=revenue, op_income=op_inc, net_income=net_inc,
                 ))
 
@@ -214,11 +220,26 @@ def fetch_financials_for_year(api_key: str, corp_code: str,
     return rows
 
 
+def _get_shares_outstanding(ticker: str) -> int | None:
+    """yfinance로 발행주식수 조회."""
+    for suffix in (".KS", ".KQ", ""):
+        try:
+            info = yf.Ticker(f"{ticker}{suffix}").fast_info
+            shares = getattr(info, "shares", None)
+            if shares and shares > 0:
+                return int(shares)
+        except Exception:
+            continue
+    return None
+
+
 def fetch_annual_financials(api_key: str, corp_code: str,
-                             years: int = 5) -> pd.DataFrame:
+                             years: int = 5,
+                             ticker: str = "") -> pd.DataFrame:
     """최근 N년 재무 데이터 수집 (API 호출 최소화).
 
     현재연도-1 기준으로 3년씩 2회 호출하여 최대 6년치 확보.
+    BPS 우선순위: ① DART 직접 ② equity/shares 계산 ③ pykrx
     """
     cur_y  = datetime.today().year
     all_rows: list[dict] = []
@@ -226,7 +247,7 @@ def fetch_annual_financials(api_key: str, corp_code: str,
     for pivot in (cur_y - 1, cur_y - 4):
         rows = fetch_financials_for_year(api_key, corp_code, pivot)
         all_rows.extend(rows)
-        time.sleep(0.2)          # DART rate limit
+        time.sleep(0.2)
 
     if not all_rows:
         return pd.DataFrame()
@@ -237,9 +258,44 @@ def fetch_annual_financials(api_key: str, corp_code: str,
         .sort_values("year")
         .reset_index(drop=True)
     )
-    # 최근 N년만 유지
     cutoff = cur_y - years - 1
-    return df[df["year"] >= cutoff].reset_index(drop=True)
+    df = df[df["year"] >= cutoff].reset_index(drop=True)
+
+    # BPS 계산: equity ÷ 발행주식수 (DART에서 직접 못 가져온 경우)
+    if "bps" not in df.columns:
+        df["bps"] = None
+    if "equity" in df.columns and df["bps"].isna().any() and ticker:
+        shares = _get_shares_outstanding(ticker)
+        if shares and shares > 0:
+            def _calc_bps(row):
+                if pd.notna(row.get("bps")):
+                    return row["bps"]
+                eq = row.get("equity")
+                if eq and eq > 0:
+                    return round(eq / shares, 2)
+                return None
+            df["bps"] = df.apply(_calc_bps, axis=1)
+
+    # pykrx fallback (equity 계산도 실패한 경우)
+    if ticker and df["bps"].isna().any():
+        try:
+            from pykrx import stock as krx
+            missing_years = df.loc[df["bps"].isna(), "year"].tolist()
+            for y in missing_years:
+                try:
+                    fd = krx.get_market_fundamental_by_date(
+                        f"{y}1201", f"{y}1231", ticker
+                    )
+                    if fd is not None and not fd.empty and "BPS" in fd.columns:
+                        val = float(fd["BPS"].iloc[-1])
+                        if val > 0:
+                            df.loc[df["year"] == y, "bps"] = val
+                except Exception:
+                    continue
+        except Exception:
+            pass
+
+    return df
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -437,7 +493,7 @@ def run_screener(tickers: list[str], api_key: str,
             continue
 
         try:
-            fin_df = fetch_annual_financials(api_key, cc, years)
+            fin_df = fetch_annual_financials(api_key, cc, years, ticker=tk)
             if fin_df.empty:
                 continue
 

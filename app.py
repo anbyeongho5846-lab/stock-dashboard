@@ -1273,11 +1273,11 @@ def cached_dart_financials(ticker: str, api_key: str, years: int):
     try:
         cc = get_corp_code(ticker, api_key)
     except DartNetworkError as e:
-        raise e   # re-raise so the UI catches it
+        raise e
     if not cc:
         return None, None, None, None
     try:
-        fin_df = fetch_annual_financials(api_key, cc, years)
+        fin_df = fetch_annual_financials(api_key, cc, years, ticker=ticker)
     except DartNetworkError as e:
         raise e
     price_df = fetch_price_history(ticker, years + 1)

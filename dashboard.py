@@ -4,6 +4,7 @@ import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 import yfinance as yf
 from pykrx import stock
+from sentiment import fetch_market_news, analyze_sentiment, score_label, sentiment_gauge
 
 # ── 페이지 설정 ──────────────────────────────────────
 st.set_page_config(
@@ -225,7 +226,7 @@ col8.metric("52주 등락폭", f"{((week52_high - week52_low) / week52_low * 100
 st.divider()
 
 # ── 탭 구성 ──────────────────────────────────────────
-tab1, tab2, tab3, tab4 = st.tabs(["📈 차트 분석", "📊 재무제표", "⚖️ 종목 비교", "⭐ 관심 종목"])
+tab1, tab2, tab3, tab4, tab5 = st.tabs(["📈 차트 분석", "📊 재무제표", "⚖️ 종목 비교", "⭐ 관심 종목", "🧠 시장 감성"])
 
 # ════════════════════════════════════════════════════
 # 탭 1 — 차트
@@ -727,3 +728,80 @@ with tab4:
         if st.button("🔄 전체 새로고침"):
             st.cache_data.clear()
             st.rerun()
+
+# ════════════════════════════════════════════════════
+# 탭 5 — 시장 감성 (공포·탐욕 지수)
+# ════════════════════════════════════════════════════
+with tab5:
+    st.subheader("🧠 시장 감성 분석 — 공포·탐욕 지수")
+    st.caption(
+        "네이버 금융 뉴스 헤드라인을 분석해 현재 시장 심리를 0(극도의 공포) ~ 100(극도의 탐욕)으로 수치화합니다. "
+        "결과는 6시간 캐시됩니다 (오전·오후 각 1회 자동 갱신)."
+    )
+
+    refresh_col, _ = st.columns([1, 5])
+    with refresh_col:
+        if st.button("🔄 지금 새로 분석"):
+            st.cache_data.clear()
+            st.rerun()
+
+    with st.spinner("뉴스 헤드라인 수집 및 감성 분석 중..."):
+        headlines = fetch_market_news()
+        score, fear_hits, greed_hits, colored = analyze_sentiment(headlines)
+        label, color = score_label(score)
+
+    # ── 게이지 + 해석 ──────────────────────────────
+    gauge_col, info_col = st.columns([1, 1])
+
+    with gauge_col:
+        st.plotly_chart(sentiment_gauge(score), use_container_width=True)
+
+    with info_col:
+        st.markdown("#### 점수 해석 가이드")
+        guide_data = {
+            "구간":   ["0 – 20",  "21 – 40", "41 – 60", "61 – 80", "81 – 100"],
+            "심리":   ["극도의 공포", "공포", "중립", "탐욕", "극도의 탐욕"],
+            "투자 시사점": [
+                "역발상 매수 고려 (바닥 근접 가능성)",
+                "저가 분할매수 검토",
+                "중립 — 종목별 판단 필요",
+                "과열 주의, 매수 신중",
+                "버블 경계, 매도 타이밍 검토",
+            ],
+        }
+        st.dataframe(
+            pd.DataFrame(guide_data).set_index("구간"),
+            use_container_width=True,
+        )
+
+        st.markdown("#### 현재 감지 키워드")
+        kw_col1, kw_col2 = st.columns(2)
+        with kw_col1:
+            st.markdown("**🔵 공포 키워드**")
+            if fear_hits:
+                st.write(", ".join(fear_hits))
+            else:
+                st.write("없음")
+        with kw_col2:
+            st.markdown("**🔴 탐욕 키워드**")
+            if greed_hits:
+                st.write(", ".join(greed_hits))
+            else:
+                st.write("없음")
+
+    st.divider()
+
+    # ── 뉴스 헤드라인 목록 ─────────────────────────
+    st.markdown("#### 📰 분석 대상 뉴스 헤드라인 (최근 20건)")
+    st.caption("🔵 공포성  🔴 탐욕성  ⚪ 중립")
+
+    if not colored:
+        st.warning("뉴스를 가져오지 못했습니다. 네트워크 연결을 확인하거나 잠시 후 다시 시도하세요.")
+    else:
+        for icon, title in colored:
+            st.markdown(f"{icon} {title}")
+
+    st.divider()
+
+    # ── 데이터 수집 현황 ───────────────────────────
+    st.markdown(f"수집된 헤드라인 수: **{len(headlines)}건** | 출처: 네이버 금융 뉴스")

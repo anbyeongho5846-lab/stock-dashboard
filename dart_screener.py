@@ -21,11 +21,68 @@ import yfinance as yf
 
 _DART_BASE       = "https://opendart.fss.or.kr/api"
 _CORP_CACHE_PATH = Path(__file__).parent / "dart_corp_codes.json"
-_CACHE_TTL_DAYS  = 30   # 캐시 파일이 있으면 이 기간 내에는 API 호출 생략
+_FIN_CACHE_PATH  = Path(__file__).parent / "dart_fin_cache.json"
+_CACHE_TTL_DAYS  = 30   # corp codes 캐시 TTL
+_FIN_CACHE_TTL   = 90   # 재무 데이터 캐시 TTL (분기 데이터라 90일)
 
 # DART API에 연결할 수 없을 때 발생하는 예외
 class DartNetworkError(Exception):
     pass
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# 재무 데이터 파일 캐시 (dart_fin_cache.json)
+# 로컬에서 생성 후 커밋 → 클라우드는 파일에서 읽음
+# ─────────────────────────────────────────────────────────────────────────────
+
+def _load_fin_cache() -> dict:
+    if _FIN_CACHE_PATH.exists():
+        try:
+            return json.loads(_FIN_CACHE_PATH.read_text(encoding="utf-8"))
+        except Exception:
+            pass
+    return {}
+
+
+def _save_fin_cache(cache: dict) -> None:
+    try:
+        _FIN_CACHE_PATH.write_text(
+            json.dumps(cache, ensure_ascii=False, default=str), encoding="utf-8"
+        )
+    except Exception:
+        pass
+
+
+def _fin_cache_fresh(entry: dict, ttl_days: int = _FIN_CACHE_TTL) -> bool:
+    updated = entry.get("updated", "")
+    if not updated:
+        return False
+    try:
+        age = (datetime.today() - datetime.fromisoformat(updated)).days
+        return age < ttl_days
+    except Exception:
+        return False
+
+
+def get_fin_from_cache(ticker: str) -> pd.DataFrame | None:
+    """캐시 파일에서 종목 재무 데이터 반환. 없거나 만료면 None."""
+    cache = _load_fin_cache()
+    entry = cache.get(ticker.upper())
+    if not entry or not _fin_cache_fresh(entry):
+        return None
+    rows = entry.get("financials", [])
+    return pd.DataFrame(rows) if rows else None
+
+
+def save_fin_to_cache(ticker: str, corp_name: str, fin_df: pd.DataFrame) -> None:
+    """재무 데이터를 캐시 파일에 저장."""
+    cache = _load_fin_cache()
+    cache[ticker.upper()] = {
+        "corp_name": corp_name,
+        "updated":   datetime.today().strftime("%Y-%m-%d"),
+        "financials": fin_df.where(fin_df.notna(), None).to_dict("records"),
+    }
+    _save_fin_cache(cache)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -235,12 +292,20 @@ def _get_shares_outstanding(ticker: str) -> int | None:
 
 def fetch_annual_financials(api_key: str, corp_code: str,
                              years: int = 5,
-                             ticker: str = "") -> pd.DataFrame:
-    """최근 N년 재무 데이터 수집 (API 호출 최소화).
+                             ticker: str = "",
+                             force_refresh: bool = False) -> pd.DataFrame:
+    """최근 N년 재무 데이터 수집.
 
-    현재연도-1 기준으로 3년씩 2회 호출하여 최대 6년치 확보.
-    BPS 우선순위: ① DART 직접 ② equity/shares 계산 ③ pykrx
+    우선순위: ① 파일 캐시(dart_fin_cache.json) ② DART API 호출
+    BPS: ① DART 직접 ② equity/shares 계산 ③ pykrx
     """
+    # ── ① 파일 캐시 확인 ──────────────────────────────────────────────────────
+    if ticker and not force_refresh:
+        cached = get_fin_from_cache(ticker)
+        if cached is not None and not cached.empty:
+            return cached
+
+    # ── ② DART API 호출 ──────────────────────────────────────────────────────
     cur_y  = datetime.today().year
     all_rows: list[dict] = []
 
@@ -294,6 +359,11 @@ def fetch_annual_financials(api_key: str, corp_code: str,
                     continue
         except Exception:
             pass
+
+    # ── 결과를 파일 캐시에 저장 ───────────────────────────────────────────────
+    if ticker and not df.empty:
+        corp_name = _get_corp_name(api_key, corp_code) or ticker
+        save_fin_to_cache(ticker, corp_name, df)
 
     return df
 

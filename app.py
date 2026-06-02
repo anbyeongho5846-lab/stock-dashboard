@@ -1331,22 +1331,52 @@ def show_dart_screener():
 
     # ── 탭1: 개별 종목 ─────────────────────────────────────────────────────────
     with tab_single:
-        chip("종목 선택")
-        c1, c2, c3 = st.columns([3, 2, 5])
-        with c1:
-            s_ticker = st.text_input(
-                "종목코드 (국내)",
-                value=st.session_state.get("dart_single_ticker", "005930"),
-                key="dart_single_ticker",
-                help="6자리 국내 종목코드 (예: 005930)",
-            )
-        with c2:
-            s_years = st.slider("조회 기간 (년)", 3, 7, 5, key="dart_single_years")
-        with c3:
-            st.info("💡 DART 사업보고서 기준 연간 데이터입니다. (분기 데이터 제외)")
+        from dart_screener import search_corps, get_corp_name_map
 
-        if not s_ticker.strip().isdigit():
-            st.warning("국내 종목코드(6자리 숫자)를 입력하세요.")
+        chip("종목 검색")
+        sc1, sc2 = st.columns([4, 1])
+        with sc1:
+            search_q = st.text_input(
+                "회사명 또는 종목코드 입력",
+                placeholder="예: 삼성전자  /  현대차  /  005930",
+                key="dart_search_q",
+                label_visibility="collapsed",
+            )
+        with sc2:
+            s_years = st.slider("기간(년)", 3, 7, 5, key="dart_single_years",
+                                label_visibility="collapsed")
+
+        # 검색 결과
+        s_ticker = st.session_state.get("dart_selected_ticker", "")
+        s_name   = st.session_state.get("dart_selected_name",   "")
+
+        if search_q:
+            hits = search_corps(search_q, max_results=50)
+            if not hits:
+                st.warning("검색 결과가 없습니다.")
+            else:
+                opts = []
+                for h in hits:
+                    badge = "✅" if h["has_cache"] else "⬜"
+                    eps_str = f"  EPS:{h['latest_eps']:,.0f}" if h.get("latest_eps") else ""
+                    opts.append(f"{badge} {h['corp_name']} ({h['ticker']}){eps_str}")
+
+                picked = st.selectbox(
+                    f"검색 결과 {len(hits)}개 (✅=재무데이터 있음)",
+                    opts,
+                    key="dart_search_sel",
+                )
+                if st.button("이 종목 분석", key="dart_search_go", use_container_width=False):
+                    idx = opts.index(picked)
+                    st.session_state["dart_selected_ticker"] = hits[idx]["ticker"]
+                    st.session_state["dart_selected_name"]   = hits[idx]["corp_name"]
+                    s_ticker = hits[idx]["ticker"]
+                    s_name   = hits[idx]["corp_name"]
+                    st.rerun()
+
+        if not s_ticker:
+            st.info("위 검색창에서 종목을 찾아 선택하세요.  \n"
+                    "예) '삼성' 입력 → 삼성전자, 삼성바이오로직스... 목록 표시")
             return
 
         with st.spinner(f"[{s_ticker}] DART 재무 데이터 수집 중..."):
@@ -1367,7 +1397,7 @@ def show_dart_screener():
             st.error("재무 데이터를 가져오지 못했습니다. 종목코드 또는 API 키를 확인하세요.")
             return
 
-        name = cached_corp_name(cc, api_key)
+        name = s_name or cached_corp_name(cc, api_key)
         cur_price = float(price_df["Close"].iloc[-1]) if price_df is not None and not price_df.empty else 0
 
         from dart_screener import score_stock, plot_valuation_band
@@ -1489,70 +1519,101 @@ def show_dart_screener():
 
     # ── 탭2: 저평가 스크리너 ───────────────────────────────────────────────────
     with tab_screen:
-        from dart_screener import DEFAULT_TICKERS
+        from dart_screener import _load_fin_cache, score_stock as _score
 
+        fin_cache = _load_fin_cache()
+        n_cached  = len(fin_cache)
+
+        # ── 필터 설정 ──────────────────────────────────────────────────────────
         chip("스크리닝 설정")
-        with st.expander("⚙️ 종목 목록 설정", expanded=True):
-            tickers_default = "\n".join(DEFAULT_TICKERS)
-            tickers_input = st.text_area(
-                "종목코드 목록 (줄바꿈으로 구분)",
-                value=tickers_default,
-                height=180,
-                key="dart_screen_tickers",
-                help="국내 6자리 종목코드 (DART 사업보고서 있는 상장사)",
-            )
-            c1, c2 = st.columns(2)
-            with c1:
-                sc_years = st.slider("재무 데이터 기간 (년)", 3, 6, 5, key="dart_sc_years")
-            with c2:
-                st.markdown(
-                    "<div style='font-size:0.82rem; color:#718096; margin-top:10px;'>"
-                    "⚠️ 종목당 DART API 2회 호출 → 20개 기준 약 1~2분 소요</div>",
-                    unsafe_allow_html=True,
+        with st.expander("⚙️ 필터 / 검색 옵션", expanded=True):
+            fc1, fc2, fc3 = st.columns([3, 2, 2])
+            with fc1:
+                sc_search = st.text_input(
+                    "회사명 또는 종목코드 필터 (비우면 전체)",
+                    placeholder="예: 현대  /  삼성  /  005930",
+                    key="dart_sc_search",
                 )
-            run_sc = st.button("▶ 스크리닝 실행", use_container_width=True, key="dart_sc_run")
+            with fc2:
+                sc_grade = st.multiselect(
+                    "의견 필터",
+                    ["강력매수", "매수", "중립", "주의", "매도"],
+                    default=["강력매수", "매수"],
+                    key="dart_sc_grade",
+                )
+            with fc3:
+                sc_min_score = st.slider("최소 점수", 0, 100, 50, key="dart_sc_minscore")
+
+            run_sc = st.button(
+                f"▶ 캐시 종목 스크리닝 실행 ({n_cached:,}개 종목, 즉시)",
+                use_container_width=True, key="dart_sc_run",
+            )
+            st.caption(
+                "💡 재무 데이터가 캐시된 종목만 스크리닝합니다.  "
+                "로컬에서 `python generate_dart_cache.py --all` 실행 후 커밋하면 전체 상장사 검색 가능."
+            )
 
         if "dart_sc_result" not in st.session_state:
             st.session_state.dart_sc_result = None
 
         if run_sc:
-            tickers_list = [t.strip() for t in tickers_input.splitlines()
-                            if t.strip() and t.strip().isdigit()]
-            if not tickers_list:
-                st.error("유효한 종목코드(6자리 숫자)를 입력하세요.")
+            if not fin_cache:
+                st.error("재무 데이터 캐시(dart_fin_cache.json)가 없습니다.")
             else:
-                prog_bar  = st.progress(0, text="DART 데이터 수집 중...")
-                prog_text = st.empty()
-                total_n   = len(tickers_list)
-
-                def _cb(i: int, total: int, tk: str):
-                    prog_bar.progress(i / total, text=f"[{i+1}/{total}] {tk} 수집 중...")
-                    prog_text.markdown(
-                        f'<div style="font-size:0.78rem; color:#718096;">'
-                        f'종목: {tk}</div>',
-                        unsafe_allow_html=True,
+                # 캐시에서 바로 스크리닝 (API 호출 없음)
+                with st.spinner(f"캐시 {n_cached:,}개 종목 스크리닝 중..."):
+                    from dart_screener import (
+                        pd as _pd, fetch_price_history, calc_band,
+                        get_corp_name_map,
                     )
+                    name_map_sc = get_corp_name_map()
+                    q_lower = sc_search.strip().lower()
 
-                from dart_screener import run_screener, DartNetworkError
-                try:
-                    results = run_screener(tickers_list, api_key, sc_years, progress_cb=_cb)
-                except DartNetworkError as e:
-                    prog_bar.empty()
-                    prog_text.empty()
-                    _show_dart_network_error(str(e))
-                    st.stop()
-                    return
+                    results = []
+                    for tk, entry in fin_cache.items():
+                        # 이름/코드 필터
+                        corp_nm = entry.get("corp_name", tk)
+                        if q_lower and q_lower not in corp_nm.lower() and q_lower not in tk.lower():
+                            continue
 
-                prog_bar.empty()
-                prog_text.empty()
+                        rows = entry.get("financials", [])
+                        if not rows:
+                            continue
+                        fin_df = pd.DataFrame(rows)
+                        if fin_df.empty:
+                            continue
+
+                        try:
+                            price_df = fetch_price_history(tk, 7)
+                            if price_df.empty:
+                                continue
+                            cur_price = float(price_df["Close"].iloc[-1])
+                            band_df   = calc_band(fin_df, price_df)
+                            s         = _score(band_df, cur_price, fin_df)
+
+                            # 의견/점수 필터
+                            if sc_grade and s["grade"] not in sc_grade:
+                                continue
+                            if s["score"] < sc_min_score:
+                                continue
+
+                            results.append(dict(
+                                ticker=tk,
+                                name=corp_nm,
+                                cur_price=cur_price,
+                                fin_df=fin_df,
+                                price_df=price_df,
+                                band_df=band_df,
+                                **s,
+                            ))
+                        except Exception:
+                            continue
+
+                    results.sort(key=lambda x: x["score"], reverse=True)
 
                 st.session_state.dart_sc_result = results
                 if not results:
-                    st.warning(
-                        "스크리닝 결과가 없습니다.  \n"
-                        "DART API 키와 종목코드를 확인하거나, "
-                        "재무제표가 있는 종목인지 확인해 주세요."
-                    )
+                    st.warning("조건에 맞는 종목이 없습니다. 필터를 완화해 보세요.")
 
         if st.session_state.dart_sc_result:
             results = st.session_state.dart_sc_result

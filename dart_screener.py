@@ -19,11 +19,12 @@ from plotly.subplots import make_subplots
 import requests
 import yfinance as yf
 
-_DART_BASE       = "https://opendart.fss.or.kr/api"
-_CORP_CACHE_PATH = Path(__file__).parent / "dart_corp_codes.json"
-_FIN_CACHE_PATH  = Path(__file__).parent / "dart_fin_cache.json"
-_CACHE_TTL_DAYS  = 30   # corp codes 캐시 TTL
-_FIN_CACHE_TTL   = 90   # 재무 데이터 캐시 TTL (분기 데이터라 90일)
+_DART_BASE        = "https://opendart.fss.or.kr/api"
+_CORP_CACHE_PATH  = Path(__file__).parent / "dart_corp_codes.json"
+_CORP_NAME_PATH   = Path(__file__).parent / "dart_corp_names.json"   # ticker→corp_name 매핑
+_FIN_CACHE_PATH   = Path(__file__).parent / "dart_fin_cache.json"
+_CACHE_TTL_DAYS   = 30   # corp codes 캐시 TTL
+_FIN_CACHE_TTL    = 90   # 재무 데이터 캐시 TTL
 
 # DART API에 연결할 수 없을 때 발생하는 예외
 class DartNetworkError(Exception):
@@ -136,12 +137,16 @@ def fetch_corp_codes(api_key: str, force_refresh: bool = False) -> dict[str, str
         xml_bytes = zf.read("CORPCODE.xml")
 
     root = ET.fromstring(xml_bytes.decode("utf-8"))
-    mapping: dict[str, str] = {}
+    mapping:  dict[str, str] = {}   # ticker → corp_code
+    name_map: dict[str, str] = {}   # ticker → corp_name
     for item in root.findall("list"):
         sc = (item.findtext("stock_code") or "").strip()
         cc = (item.findtext("corp_code")  or "").strip()
+        cn = (item.findtext("corp_name")  or "").strip()
         if sc and cc:
-            mapping[sc] = cc
+            mapping[sc]  = cc
+            if cn:
+                name_map[sc] = cn
 
     try:
         _CORP_CACHE_PATH.write_text(
@@ -150,7 +155,37 @@ def fetch_corp_codes(api_key: str, force_refresh: bool = False) -> dict[str, str
     except Exception:
         pass
 
+    # corp_name 별도 저장 → 검색에 사용
+    try:
+        _CORP_NAME_PATH.write_text(
+            json.dumps(name_map, ensure_ascii=False, indent=None), encoding="utf-8"
+        )
+    except Exception:
+        pass
+
     return mapping
+
+
+def get_corp_name_map() -> dict[str, str]:
+    """ticker → 회사명 매핑 반환 (dart_corp_names.json 우선, fin cache 보완)."""
+    names: dict[str, str] = {}
+    # corp_names.json
+    if _CORP_NAME_PATH.exists():
+        try:
+            names.update(json.loads(_CORP_NAME_PATH.read_text(encoding="utf-8")))
+        except Exception:
+            pass
+    # fin_cache에서 보완
+    if _FIN_CACHE_PATH.exists():
+        try:
+            for tk, entry in json.loads(
+                _FIN_CACHE_PATH.read_text(encoding="utf-8")
+            ).items():
+                if tk not in names and entry.get("corp_name"):
+                    names[tk] = entry["corp_name"]
+        except Exception:
+            pass
+    return names
 
 
 def get_corp_code(ticker: str, api_key: str) -> str | None:
@@ -341,24 +376,7 @@ def fetch_annual_financials(api_key: str, corp_code: str,
                 return None
             df["bps"] = df.apply(_calc_bps, axis=1)
 
-    # pykrx fallback (equity 계산도 실패한 경우)
-    if ticker and df["bps"].isna().any():
-        try:
-            from pykrx import stock as krx
-            missing_years = df.loc[df["bps"].isna(), "year"].tolist()
-            for y in missing_years:
-                try:
-                    fd = krx.get_market_fundamental_by_date(
-                        f"{y}1201", f"{y}1231", ticker
-                    )
-                    if fd is not None and not fd.empty and "BPS" in fd.columns:
-                        val = float(fd["BPS"].iloc[-1])
-                        if val > 0:
-                            df.loc[df["year"] == y, "bps"] = val
-                except Exception:
-                    continue
-        except Exception:
-            pass
+    # pykrx fallback은 KRX 인증 필요로 비활성화 (equity/shares 계산으로 대체)
 
     # ── 결과를 파일 캐시에 저장 ───────────────────────────────────────────────
     if ticker and not df.empty:
@@ -592,6 +610,59 @@ def run_screener(tickers: list[str], api_key: str,
             continue
 
     return sorted(results, key=lambda x: x["score"], reverse=True)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# 종목 검색 (fin_cache + corp_names 기반 — API 호출 없음)
+# ─────────────────────────────────────────────────────────────────────────────
+
+def search_corps(query: str, max_results: int = 30) -> list[dict]:
+    """회사명 또는 종목코드로 검색.
+
+    dart_corp_names.json (전체 상장사 이름) 에서 검색하고,
+    dart_fin_cache.json 에 재무 데이터가 있는 종목은 표시.
+    """
+    query = query.strip()
+    if not query:
+        return []
+
+    name_map   = get_corp_name_map()           # ticker → corp_name
+    fin_cache  = _load_fin_cache()             # ticker → fin entry
+
+    results: list[dict] = []
+    q_lower = query.lower()
+    q_is_code = query.isdigit()
+
+    for ticker, corp_name in name_map.items():
+        # 종목코드 prefix 매치 또는 회사명 포함 매치
+        if q_is_code:
+            if not ticker.startswith(query):
+                continue
+        else:
+            if q_lower not in corp_name.lower() and q_lower not in ticker:
+                continue
+
+        has_cache = ticker in fin_cache and _fin_cache_fresh(fin_cache[ticker])
+        cached_entry = fin_cache.get(ticker, {})
+        latest_eps = None
+        if has_cache:
+            rows = cached_entry.get("financials", [])
+            if rows:
+                last = rows[-1]
+                latest_eps = last.get("eps")
+
+        results.append({
+            "ticker":     ticker,
+            "corp_name":  corp_name,
+            "has_cache":  has_cache,
+            "latest_eps": latest_eps,
+        })
+        if len(results) >= max_results:
+            break
+
+    # 캐시 있는 종목 우선, 그 다음 코드 순
+    results.sort(key=lambda x: (not x["has_cache"], x["ticker"]))
+    return results
 
 
 def _get_corp_name(api_key: str, corp_code: str) -> str | None:

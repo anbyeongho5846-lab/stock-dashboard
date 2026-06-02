@@ -1327,12 +1327,28 @@ def show_dart_screener():
         st.code("""[dart]\napi_key = "발급받은키\"""", language="toml")
         return
 
+    # dart_screener 모듈 최초 임포트 (함수 진입 시 한 번만)
+    try:
+        import dart_screener as _ds
+        from dart_screener import (
+            search_corps, get_corp_name_map,
+            fetch_price_history, calc_band,
+            score_stock as _score_stock,
+            plot_valuation_band as _plot_band,
+            plot_screener_result as _plot_sc,
+            _load_fin_cache, DartNetworkError,
+        )
+    except Exception as _import_err:
+        st.error(
+            f"**dart_screener 모듈 로드 실패**: `{type(_import_err).__name__}: {_import_err}`\n\n"
+            "Streamlit Cloud 로그(Manage app)에서 상세 오류를 확인하세요."
+        )
+        return
+
     tab_single, tab_screen = st.tabs(["📈 개별 종목 밴드 분석", "🔍 저평가 스크리너"])
 
     # ── 탭1: 개별 종목 ─────────────────────────────────────────────────────────
     with tab_single:
-        from dart_screener import search_corps, get_corp_name_map
-
         chip("종목 검색")
         sc1, sc2 = st.columns([4, 1])
         with sc1:
@@ -1400,9 +1416,8 @@ def show_dart_screener():
         name = s_name or cached_corp_name(cc, api_key)
         cur_price = float(price_df["Close"].iloc[-1]) if price_df is not None and not price_df.empty else 0
 
-        from dart_screener import score_stock, plot_valuation_band
-        s = score_stock(band_df if band_df is not None else pd.DataFrame(),
-                        cur_price, fin_df)
+        s = _score_stock(band_df if band_df is not None else pd.DataFrame(),
+                         cur_price, fin_df)
 
         # ── 종목 헤더 ──────────────────────────────────────────────────────────
         grade_color_map = {
@@ -1467,7 +1482,7 @@ def show_dart_screener():
 
         # ── 밴드 차트 ──────────────────────────────────────────────────────────
         if price_df is not None and not price_df.empty:
-            fig = plot_valuation_band(
+            fig = _plot_band(
                 s_ticker, name, price_df, fin_df,
                 band_df if band_df is not None else pd.DataFrame(),
                 show=False,
@@ -1519,8 +1534,6 @@ def show_dart_screener():
 
     # ── 탭2: 저평가 스크리너 ───────────────────────────────────────────────────
     with tab_screen:
-        from dart_screener import _load_fin_cache, score_stock as _score
-
         fin_cache = _load_fin_cache()
         n_cached  = len(fin_cache)
 
@@ -1562,10 +1575,6 @@ def show_dart_screener():
             else:
                 # 캐시에서 바로 스크리닝 (API 호출 없음)
                 with st.spinner(f"캐시 {n_cached:,}개 종목 스크리닝 중..."):
-                    from dart_screener import (
-                        pd as _pd, fetch_price_history, calc_band,
-                        get_corp_name_map,
-                    )
                     name_map_sc = get_corp_name_map()
                     q_lower = sc_search.strip().lower()
 
@@ -1589,7 +1598,7 @@ def show_dart_screener():
                                 continue
                             cur_price = float(price_df["Close"].iloc[-1])
                             band_df   = calc_band(fin_df, price_df)
-                            s         = _score(band_df, cur_price, fin_df)
+                            s         = _score_stock(band_df, cur_price, fin_df)
 
                             # 의견/점수 필터
                             if sc_grade and s["grade"] not in sc_grade:
@@ -1636,8 +1645,7 @@ def show_dart_screener():
             st.markdown("---")
 
             # ── 버블 차트 ──────────────────────────────────────────────────────
-            from dart_screener import plot_screener_result
-            fig_sc = plot_screener_result(results, show=False)
+            fig_sc = _plot_sc(results, show=False)
             st.plotly_chart(fig_sc, use_container_width=True)
 
             # ── 결과 테이블 ────────────────────────────────────────────────────
@@ -1679,8 +1687,7 @@ def show_dart_screener():
                 r_sel = results[idx]
 
                 if r_sel.get("price_df") is not None and not r_sel["price_df"].empty:
-                    from dart_screener import plot_valuation_band
-                    fig_d = plot_valuation_band(
+                    fig_d = _plot_band(
                         r_sel["ticker"], r_sel.get("name", r_sel["ticker"]),
                         r_sel["price_df"], r_sel["fin_df"],
                         r_sel.get("band_df", pd.DataFrame()),

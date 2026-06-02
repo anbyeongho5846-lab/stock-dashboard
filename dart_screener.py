@@ -65,7 +65,7 @@ def _fin_cache_fresh(entry: dict, ttl_days: int = _FIN_CACHE_TTL) -> bool:
         return False
 
 
-def get_fin_from_cache(ticker: str) -> pd.DataFrame | None:
+def get_fin_from_cache(ticker: str):
     """캐시 파일에서 종목 재무 데이터 반환. 없거나 만료면 None."""
     cache = _load_fin_cache()
     entry = cache.get(ticker.upper())

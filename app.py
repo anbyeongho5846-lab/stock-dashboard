@@ -1266,20 +1266,36 @@ def _color_grade(val: str) -> str:
     return "color:#94a3b8"
 
 
+class DartCacheMissError(Exception):
+    """재무 캐시가 없고 DART API에도 연결할 수 없을 때 발생."""
+    pass
+
+
 @st.cache_data(ttl=3600)
 def cached_dart_financials(ticker: str, api_key: str, years: int):
     from dart_screener import (get_corp_code, fetch_annual_financials,
-                                fetch_price_history, calc_band, DartNetworkError)
+                                fetch_price_history, calc_band,
+                                DartNetworkError, get_fin_from_cache)
     try:
         cc = get_corp_code(ticker, api_key)
     except DartNetworkError as e:
         raise e
     if not cc:
         return None, None, None, None
+
+    # 캐시 먼저 확인 — 있으면 API 호출 없이 반환
+    cached = get_fin_from_cache(ticker)
+    if cached is not None and not cached.empty:
+        price_df = fetch_price_history(ticker, years + 1)
+        band_df  = calc_band(cached, price_df) if not price_df.empty else None
+        return cc, cached, price_df, band_df
+
+    # 캐시 없음 → API 호출 시도
     try:
         fin_df = fetch_annual_financials(api_key, cc, years, ticker=ticker)
-    except DartNetworkError as e:
-        raise e
+    except DartNetworkError:
+        raise DartCacheMissError(ticker)
+
     price_df = fetch_price_history(ticker, years + 1)
     band_df  = calc_band(fin_df, price_df) if not fin_df.empty and not price_df.empty else None
     return cc, fin_df, price_df, band_df
@@ -1400,9 +1416,21 @@ def show_dart_screener():
                 cc, fin_df, price_df, band_df = cached_dart_financials(
                     s_ticker.strip(), api_key, s_years
                 )
+            except DartCacheMissError as e:
+                st.warning(
+                    f"**{s_name} ({s_ticker})** 종목은 재무 캐시에 없습니다.  \n"
+                    "Streamlit Cloud에서는 DART API 직접 호출이 차단됩니다.  \n\n"
+                    "**로컬 PC에서 아래 명령을 실행한 뒤 커밋하면 이용 가능합니다:**\n"
+                    "```\n"
+                    f"python generate_dart_cache.py --fin-only --tickers {s_ticker}\n"
+                    "git add dart_fin_cache.json\n"
+                    f'git commit -m "Add {s_name} to cache"\n'
+                    "git push\n"
+                    "```"
+                )
+                return
             except Exception as e:
-                err_msg = str(e)
-                _show_dart_network_error(err_msg)
+                _show_dart_network_error(str(e))
                 return
 
         if cc is None:

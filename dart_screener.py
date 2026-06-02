@@ -328,7 +328,8 @@ def _get_shares_outstanding(ticker: str) -> int | None:
 def fetch_annual_financials(api_key: str, corp_code: str,
                              years: int = 5,
                              ticker: str = "",
-                             force_refresh: bool = False) -> pd.DataFrame:
+                             force_refresh: bool = False,
+                             save_cache: bool = True) -> pd.DataFrame:
     """최근 N년 재무 데이터 수집.
 
     우선순위: ① 파일 캐시(dart_fin_cache.json) ② DART API 호출
@@ -378,8 +379,8 @@ def fetch_annual_financials(api_key: str, corp_code: str,
 
     # pykrx fallback은 KRX 인증 필요로 비활성화 (equity/shares 계산으로 대체)
 
-    # ── 결과를 파일 캐시에 저장 ───────────────────────────────────────────────
-    if ticker and not df.empty:
+    # ── 결과를 파일 캐시에 저장 (save_cache=False 이면 호출자가 직접 저장) ──
+    if ticker and not df.empty and save_cache:
         corp_name = _get_corp_name(api_key, corp_code) or ticker
         save_fin_to_cache(ticker, corp_name, df)
 

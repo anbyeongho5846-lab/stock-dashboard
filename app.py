@@ -1268,11 +1268,18 @@ def _color_grade(val: str) -> str:
 
 @st.cache_data(ttl=3600)
 def cached_dart_financials(ticker: str, api_key: str, years: int):
-    from dart_screener import get_corp_code, fetch_annual_financials, fetch_price_history, calc_band
-    cc = get_corp_code(ticker, api_key)
+    from dart_screener import (get_corp_code, fetch_annual_financials,
+                                fetch_price_history, calc_band, DartNetworkError)
+    try:
+        cc = get_corp_code(ticker, api_key)
+    except DartNetworkError as e:
+        raise e   # re-raise so the UI catches it
     if not cc:
         return None, None, None, None
-    fin_df   = fetch_annual_financials(api_key, cc, years)
+    try:
+        fin_df = fetch_annual_financials(api_key, cc, years)
+    except DartNetworkError as e:
+        raise e
     price_df = fetch_price_history(ticker, years + 1)
     band_df  = calc_band(fin_df, price_df) if not fin_df.empty and not price_df.empty else None
     return cc, fin_df, price_df, band_df
@@ -1282,6 +1289,26 @@ def cached_dart_financials(ticker: str, api_key: str, years: int):
 def cached_corp_name(corp_code: str, api_key: str) -> str:
     from dart_screener import _get_corp_name
     return _get_corp_name(api_key, corp_code) or corp_code
+
+
+def _show_dart_network_error(detail: str = "") -> None:
+    """DART 네트워크 오류 공통 안내 박스."""
+    st.error(
+        "**DART API 연결 실패** — Streamlit Cloud(해외 서버)에서는 "
+        "`opendart.fss.or.kr`에 접속이 차단될 수 있습니다.\n\n"
+        "**해결 방법:** 로컬 PC에서 아래 명령을 실행하여 "
+        "`dart_corp_codes.json`을 생성한 뒤 GitHub에 커밋하세요.\n\n"
+        "```\n"
+        "cd stock_analyzer\n"
+        "python generate_dart_cache.py\n"
+        "git add dart_corp_codes.json\n"
+        "git commit -m \"Add DART corp codes cache\"\n"
+        "git push\n"
+        "```"
+    )
+    if detail:
+        with st.expander("상세 오류"):
+            st.code(detail)
 
 
 def show_dart_screener():
@@ -1322,13 +1349,19 @@ def show_dart_screener():
             st.warning("국내 종목코드(6자리 숫자)를 입력하세요.")
             return
 
-        with st.spinner(f"[{s_ticker}] DART 재무 데이터 수집 중... (첫 조회 시 30~60초 소요)"):
-            cc, fin_df, price_df, band_df = cached_dart_financials(
-                s_ticker.strip(), api_key, s_years
-            )
+        with st.spinner(f"[{s_ticker}] DART 재무 데이터 수집 중..."):
+            try:
+                cc, fin_df, price_df, band_df = cached_dart_financials(
+                    s_ticker.strip(), api_key, s_years
+                )
+            except Exception as e:
+                err_msg = str(e)
+                _show_dart_network_error(err_msg)
+                return
 
         if cc is None:
-            st.error("DART에서 해당 종목코드를 찾을 수 없습니다.")
+            st.error("DART에서 해당 종목코드를 찾을 수 없습니다.  \n"
+                     "`dart_corp_codes.json` 캐시가 없으면 로컬에서 먼저 실행해야 합니다.")
             return
         if fin_df is None or fin_df.empty:
             st.error("재무 데이터를 가져오지 못했습니다. 종목코드 또는 API 키를 확인하세요.")
@@ -1500,8 +1533,15 @@ def show_dart_screener():
                         unsafe_allow_html=True,
                     )
 
-                from dart_screener import run_screener
-                results = run_screener(tickers_list, api_key, sc_years, progress_cb=_cb)
+                from dart_screener import run_screener, DartNetworkError
+                try:
+                    results = run_screener(tickers_list, api_key, sc_years, progress_cb=_cb)
+                except DartNetworkError as e:
+                    prog_bar.empty()
+                    prog_text.empty()
+                    _show_dart_network_error(str(e))
+                    st.stop()
+                    return
 
                 prog_bar.empty()
                 prog_text.empty()

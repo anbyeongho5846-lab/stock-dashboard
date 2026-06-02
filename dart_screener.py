@@ -21,7 +21,11 @@ import yfinance as yf
 
 _DART_BASE       = "https://opendart.fss.or.kr/api"
 _CORP_CACHE_PATH = Path(__file__).parent / "dart_corp_codes.json"
-_CACHE_TTL_DAYS  = 7
+_CACHE_TTL_DAYS  = 30   # 캐시 파일이 있으면 이 기간 내에는 API 호출 생략
+
+# DART API에 연결할 수 없을 때 발생하는 예외
+class DartNetworkError(Exception):
+    pass
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -35,20 +39,41 @@ def _cache_valid(path: Path, ttl_days: int) -> bool:
     return (datetime.now().timestamp() - os.path.getmtime(path)) / 86400 < ttl_days
 
 
-def fetch_corp_codes(api_key: str) -> dict[str, str]:
-    """종목코드 → DART 고유번호 매핑 (7일 캐시)."""
-    if _cache_valid(_CORP_CACHE_PATH, _CACHE_TTL_DAYS):
+def fetch_corp_codes(api_key: str, force_refresh: bool = False) -> dict[str, str]:
+    """종목코드 → DART 고유번호 매핑.
+
+    캐시 파일(dart_corp_codes.json)이 있으면 TTL 내에서는 파일을 사용.
+    파일이 없거나 force_refresh=True 일 때만 DART API 호출.
+    """
+    if not force_refresh and _cache_valid(_CORP_CACHE_PATH, _CACHE_TTL_DAYS):
         try:
             return json.loads(_CORP_CACHE_PATH.read_text(encoding="utf-8"))
         except Exception:
             pass
 
-    resp = requests.get(
-        f"{_DART_BASE}/corpCode.xml",
-        params={"crtfc_key": api_key},
-        timeout=30,
-    )
-    resp.raise_for_status()
+    # 캐시가 만료/없을 때 API 호출 — 실패해도 기존 캐시 반환
+    try:
+        resp = requests.get(
+            f"{_DART_BASE}/corpCode.xml",
+            params={"crtfc_key": api_key},
+            timeout=60,
+        )
+        resp.raise_for_status()
+    except (requests.exceptions.ConnectTimeout,
+            requests.exceptions.ConnectionError,
+            requests.exceptions.ReadTimeout) as e:
+        # 네트워크 불가 → 기존 캐시 파일이라도 사용
+        if _CORP_CACHE_PATH.exists():
+            try:
+                return json.loads(_CORP_CACHE_PATH.read_text(encoding="utf-8"))
+            except Exception:
+                pass
+        raise DartNetworkError(
+            "DART API(opendart.fss.or.kr)에 연결할 수 없습니다. "
+            "해외 서버에서는 접속이 차단될 수 있습니다.\n"
+            "로컬에서 generate_dart_cache.py를 실행하여 "
+            "dart_corp_codes.json을 생성한 뒤 커밋해 주세요."
+        ) from e
 
     with zipfile.ZipFile(io.BytesIO(resp.content)) as zf:
         xml_bytes = zf.read("CORPCODE.xml")
@@ -63,7 +88,7 @@ def fetch_corp_codes(api_key: str) -> dict[str, str]:
 
     try:
         _CORP_CACHE_PATH.write_text(
-            json.dumps(mapping, ensure_ascii=False), encoding="utf-8"
+            json.dumps(mapping, ensure_ascii=False, indent=None), encoding="utf-8"
         )
     except Exception:
         pass
@@ -73,6 +98,11 @@ def fetch_corp_codes(api_key: str) -> dict[str, str]:
 
 def get_corp_code(ticker: str, api_key: str) -> str | None:
     return fetch_corp_codes(api_key).get(ticker.strip().upper())
+
+
+def corp_cache_exists() -> bool:
+    """dart_corp_codes.json 캐시 파일 존재 여부."""
+    return _CORP_CACHE_PATH.exists()
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -92,11 +122,18 @@ def _dart_request(api_key: str, endpoint: str, **params) -> list[dict]:
         r = requests.get(
             f"{_DART_BASE}/{endpoint}",
             params={"crtfc_key": api_key, **params},
-            timeout=20,
+            timeout=30,
         )
         d = r.json()
         if d.get("status") == "000":
             return d.get("list", [])
+    except (requests.exceptions.ConnectTimeout,
+            requests.exceptions.ConnectionError,
+            requests.exceptions.ReadTimeout) as e:
+        raise DartNetworkError(
+            f"DART API 연결 실패 ({endpoint}). "
+            "해외 서버 접속 차단 또는 네트워크 오류입니다."
+        ) from e
     except Exception:
         pass
     return []
@@ -436,7 +473,7 @@ def _get_corp_name(api_key: str, corp_code: str) -> str | None:
         r = requests.get(
             f"{_DART_BASE}/company.json",
             params={"crtfc_key": api_key, "corp_code": corp_code},
-            timeout=10,
+            timeout=15,
         )
         d = r.json()
         if d.get("status") == "000":

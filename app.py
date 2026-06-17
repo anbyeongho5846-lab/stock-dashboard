@@ -474,6 +474,91 @@ def show_market():
     st.plotly_chart(fig, use_container_width=True)
 
 
+# ── 뉴스 공통 유틸 ───────────────────────────────────────────────────────────
+
+@st.cache_data(ttl=1800)
+def cached_news(ticker: str, corp_name: str, is_kr: bool) -> tuple:
+    """뉴스 30분 캐시 (IP 차단 방지)."""
+    from news import fetch_news, sentiment_summary
+    try:
+        naver_id     = st.secrets.get("naver", {}).get("client_id", "")
+        naver_secret = st.secrets.get("naver", {}).get("client_secret", "")
+    except Exception:
+        naver_id = naver_secret = ""
+    items, source = fetch_news(ticker, corp_name, is_kr,
+                               naver_id, naver_secret, max_items=20)
+    summary = sentiment_summary(items) if items else {}
+    return items, source, summary
+
+
+def _render_news(ticker: str, corp_name: str = "", is_kr: bool = True) -> None:
+    """뉴스 목록 + 감성 요약 렌더링 (재사용 헬퍼)."""
+    from news import sentiment_summary
+
+    with st.spinner("뉴스 로딩 중..."):
+        items, source, summ = cached_news(ticker, corp_name, is_kr)
+
+    if not items:
+        st.info(
+            "뉴스를 가져오지 못했습니다.  \n"
+            f"👉 [네이버 금융에서 직접 확인](https://finance.naver.com/item/news.naver?code={ticker})"
+            if is_kr else
+            "뉴스를 가져오지 못했습니다. Naver API 키를 설정하면 미국 종목 뉴스도 지원됩니다."
+        )
+        return
+
+    # ── 감성 요약 배지 ─────────────────────────────────────────────────────────
+    ov = summ.get("overall", "neutral")
+    ov_color = {"positive": "#22c55e", "negative": "#ef4444", "neutral": "#94a3b8"}[ov]
+    ov_label = {"positive": "🟢 긍정 우세", "negative": "🔴 부정 우세", "neutral": "⬜ 중립"}[ov]
+
+    sc1, sc2, sc3, sc4 = st.columns(4)
+    sc1.metric("뉴스 건수", f"{summ['total']}건", delta=f"출처: {source}")
+    sc2.metric("🟢 긍정", f"{summ['positive']}건 ({summ['pos_pct']}%)")
+    sc3.metric("🔴 부정", f"{summ['negative']}건 ({summ['neg_pct']}%)")
+    sc4.metric("전체 분위기", ov_label)
+
+    st.markdown("---")
+
+    # ── 뉴스 카드 목록 ─────────────────────────────────────────────────────────
+    sent_color = {"positive": "#22c55e", "negative": "#ef4444", "neutral": "#475569"}
+    sent_label = {"positive": "긍정", "negative": "부정", "neutral": "중립"}
+
+    for item in items:
+        s_color = sent_color[item["sentiment"]]
+        s_label = sent_label[item["sentiment"]]
+        desc    = item.get("description", "")
+        desc_html = f'<div style="color:#94a3b8; font-size:0.78rem; margin-top:4px;">{desc[:120]}…</div>' if desc else ""
+
+        st.markdown(f"""
+<div style="
+    background:#1a2035;
+    border:1px solid rgba(255,255,255,0.06);
+    border-left:3px solid {s_color};
+    border-radius:8px;
+    padding:12px 16px;
+    margin-bottom:8px;
+">
+    <div style="display:flex; justify-content:space-between; align-items:flex-start; gap:12px;">
+        <a href="{item['url']}" target="_blank" style="
+            color:#e2e8f0; font-size:0.88rem; font-weight:500;
+            text-decoration:none; line-height:1.5; flex:1;
+        ">{item['title']}</a>
+        <span style="
+            background:{s_color}22; color:{s_color};
+            border:1px solid {s_color}55;
+            border-radius:12px; padding:1px 8px;
+            font-size:0.70rem; font-weight:600; white-space:nowrap;
+        ">{s_label}</span>
+    </div>
+    {desc_html}
+    <div style="color:#4a5568; font-size:0.73rem; margin-top:6px;">
+        {item['press']}  ·  {item['date']}
+    </div>
+</div>
+""", unsafe_allow_html=True)
+
+
 # ── 페이지: 종목 분석 ─────────────────────────────────────────────────────────
 
 def show_analyzer():
@@ -537,6 +622,11 @@ def show_analyzer():
             disp[col] = disp[col].apply(lambda v: f"{v:,.0f}")
         disp["거래량"] = disp["거래량"].apply(fmt_volume)
         st.dataframe(disp, use_container_width=True)
+
+    # ── 뉴스 피드 ──────────────────────────────────────────────────────────────
+    st.markdown("---")
+    chip("📰 관련 뉴스 & 감성 분석")
+    _render_news(ticker.strip().upper(), corp_name="", is_kr=is_kr)
 
 
 # ── 페이지: 백테스팅 ──────────────────────────────────────────────────────────
@@ -861,6 +951,11 @@ def show_fundamental():
     if summary:
         with st.expander("📝 기업 소개", expanded=False):
             st.write(summary)
+
+    # ── 뉴스 피드 ──────────────────────────────────────────────────────────────
+    st.markdown("---")
+    chip("📰 관련 뉴스 & 감성 분석")
+    _render_news(ticker.strip(), corp_name=name, is_kr=is_kr)
 
 
 # ── 페이지: 투자자 동향 ───────────────────────────────────────────────────────

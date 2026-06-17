@@ -12,8 +12,9 @@ from datetime import datetime, timedelta
 import pandas as pd
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
-from ta.momentum import RSIIndicator
+from ta.momentum import RSIIndicator, StochasticOscillator
 from ta.trend import MACD
+from ta.volatility import BollingerBands
 
 
 # ── 데이터 수집 ───────────────────────────────────────────────────────────────
@@ -76,6 +77,22 @@ def add_indicators(df: pd.DataFrame) -> pd.DataFrame:
     df["MACD"] = macd.macd()
     df["MACD_Signal"] = macd.macd_signal()
     df["MACD_Hist"] = macd.macd_diff()
+
+    # 볼린저밴드 (20일, 2σ) — 박스권 평균회귀 전략용
+    bb = BollingerBands(df["Close"], window=20, window_dev=2)
+    df["BB_Mid"]   = bb.bollinger_mavg()
+    df["BB_Upper"] = bb.bollinger_hband()
+    df["BB_Lower"] = bb.bollinger_lband()
+    df["BB_PctB"]  = bb.bollinger_pband()    # %B: 0=하단, 1=상단
+    df["BB_Width"] = bb.bollinger_wband()    # 밴드폭(%) — 변동성 수축 감지
+
+    # 스토캐스틱 (14, %D=3) — 박스권 과매수/과매도 전략용
+    so = StochasticOscillator(
+        high=df["High"], low=df["Low"], close=df["Close"],
+        window=14, smooth_window=3,
+    )
+    df["Stoch_K"] = so.stoch()          # %K (Fast)
+    df["Stoch_D"] = so.stoch_signal()   # %D (Slow, %K의 3일 SMA)
 
     return df
 

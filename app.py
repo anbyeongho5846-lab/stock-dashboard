@@ -1975,6 +1975,68 @@ def show_advanced_analysis():
                 for s in meta["avoid"]:
                     st.markdown(f"- {s}")
 
+            # ── 박스권 오실레이터 신호 (국면 따라 자동 활성/비활성) ─────────────
+            st.markdown("---")
+            chip("📐 볼린저밴드 + 스토캐스틱 (박스권 역추세 전략)")
+
+            if not df_adv.empty:
+                from regime import oscillator_signals, plot_oscillators
+                osc = oscillator_signals(df_adv, result)
+
+                if osc["active"]:
+                    # 박스권 → 신호 활성화
+                    st.success(f"✅ **신호 활성화** — {osc['reason']}")
+                else:
+                    # 추세 국면 → 비활성화 (회색 안내)
+                    st.warning(f"🚫 **신호 비활성화** — {osc['reason']}")
+
+                # 현재 지표 상태 카드
+                bb_ = osc["bb"]; st_ = osc["stoch"]
+                oc1, oc2, oc3, oc4 = st.columns(4)
+                oc1.metric("볼린저 %B", f"{bb_.get('pct_b', '—')}",
+                           delta=bb_.get("position", ""))
+                oc2.metric("밴드폭", f"{bb_.get('width', '—')}",
+                           delta="🔸 수축(전환 임박)" if osc["squeeze"] else None)
+                oc3.metric("스토캐스틱 %K", f"{st_.get('k', '—')}",
+                           delta=st_.get("zone", ""))
+                oc4.metric("%K-%D 크로스", st_.get("cross", "—"))
+
+                # 신호 출력 — 박스권일 때만 강조, 추세면 흐리게
+                if osc["active"]:
+                    combined = osc.get("combined")
+                    if combined:
+                        if combined["type"] == "buy":
+                            st.success(combined["msg"])
+                        else:
+                            st.error(combined["msg"])
+
+                    if osc["signals"]:
+                        for sig in osc["signals"]:
+                            icon = "🟢" if sig["type"] == "buy" else "🔴"
+                            st.markdown(
+                                f"{icon} **[{sig['src']}]** {sig['msg']}"
+                            )
+                    elif not combined:
+                        st.info("현재 역추세 진입 신호 없음 — 밴드 중앙 부근입니다.")
+
+                    if osc["squeeze"]:
+                        st.caption(
+                            "🔸 **밴드폭 수축 감지**: 변동성이 줄어들고 있습니다. "
+                            "곧 박스권을 벗어나 추세가 시작될 수 있으니 역추세 매매에 주의하세요."
+                        )
+                else:
+                    st.caption(
+                        "ℹ️ 추세 국면에서는 볼린저·스토캐스틱 역추세 신호가 "
+                        "잦은 가짜 신호(whipsaw)를 내므로 자동으로 끕니다. "
+                        "아래 차트는 참고용으로만 확인하세요."
+                    )
+
+                # 차트
+                fig_osc = plot_oscillators(
+                    df_adv, title=f"{adv_ticker} ({adv_days}일)", show=False
+                )
+                st.plotly_chart(fig_osc, use_container_width=True)
+
     # ── 탭2: 스마트 머니 + 매물대 ───────────────────────────────────────────
     with tab2:
         chip("스마트 머니 + 매물대 (Volume Profile)")

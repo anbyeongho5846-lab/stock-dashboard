@@ -257,3 +257,215 @@ def plot_regime(
     if show:
         fig.show()
     return fig
+
+
+# ── 박스권 오실레이터 신호 (볼린저밴드 + 스토캐스틱) ──────────────────────────────
+
+def oscillator_signals(df: pd.DataFrame, regime_result: dict) -> dict:
+    """
+    볼린저밴드 + 스토캐스틱 역추세 신호.
+    국면 필터: 박스권(ranging)일 때만 active=True, 추세 국면이면 신호 비활성화.
+
+    df 는 analyzer.add_indicators() 결과 (BB_*, Stoch_K/D 컬럼 필요).
+
+    Returns dict:
+        active        : bool  — 박스권이면 True (신호 유효)
+        regime        : str
+        reason        : str   — 활성/비활성 사유
+        bb            : dict   — 현재 볼린저 상태
+        stoch         : dict   — 현재 스토캐스틱 상태
+        signals       : list   — 개별 신호 (역추세)
+        combined      : dict | None — 볼린저+스토캐스틱 동시 충족 신호
+        squeeze       : bool   — 밴드폭 수축 (추세 전환 임박 경고)
+    """
+    need = ["BB_Upper", "BB_Lower", "BB_Mid", "BB_PctB", "BB_Width",
+            "Stoch_K", "Stoch_D", "Close"]
+    if df.empty or any(c not in df.columns for c in need):
+        return {"active": False, "reason": "지표 데이터 부족", "signals": [],
+                "combined": None, "bb": {}, "stoch": {}, "squeeze": False,
+                "regime": regime_result.get("regime", "unknown")}
+
+    regime = regime_result.get("regime", "unknown")
+    is_ranging = (regime == "ranging")
+
+    last = df.iloc[-1]
+    prev = df.iloc[-2] if len(df) > 1 else last
+
+    price   = float(last["Close"])
+    bb_up   = float(last["BB_Upper"])
+    bb_lo   = float(last["BB_Lower"])
+    bb_mid  = float(last["BB_Mid"])
+    pct_b   = float(last["BB_PctB"])
+    width   = float(last["BB_Width"])
+    k_now   = float(last["Stoch_K"])
+    d_now   = float(last["Stoch_D"])
+    k_prev  = float(prev["Stoch_K"])
+    d_prev  = float(prev["Stoch_D"])
+
+    # 밴드폭 수축 감지 (최근 20봉 대비 하위 20% 수준이면 squeeze)
+    width_series = df["BB_Width"].dropna().tail(20)
+    squeeze = bool(len(width_series) >= 10 and
+                   width <= width_series.quantile(0.20))
+
+    # ── 스토캐스틱 크로스 판정 ─────────────────────────────────────────────────
+    golden_cross = (k_prev <= d_prev) and (k_now > d_now)   # %K가 %D 상향 돌파
+    dead_cross   = (k_prev >= d_prev) and (k_now < d_now)   # %K가 %D 하향 돌파
+
+    bb = {
+        "price": price, "upper": bb_up, "lower": bb_lo, "mid": bb_mid,
+        "pct_b": round(pct_b, 2), "width": round(width, 2),
+        "position": ("상단 돌파" if price >= bb_up
+                     else "하단 이탈" if price <= bb_lo
+                     else "밴드 내부"),
+    }
+    stoch = {
+        "k": round(k_now, 1), "d": round(d_now, 1),
+        "zone": ("과매수" if k_now >= 80 else "과매도" if k_now <= 20 else "중립"),
+        "cross": ("골든크로스" if golden_cross else "데드크로스" if dead_cross else "—"),
+    }
+
+    signals = []
+
+    # ── 개별 신호 ──────────────────────────────────────────────────────────────
+    # 볼린저 하단 매수
+    if price <= bb_lo:
+        signals.append({"type": "buy", "src": "볼린저밴드",
+                        "msg": f"종가가 하단밴드({bb_lo:,.0f}) 터치 — 평균회귀 매수 구간"})
+    elif price >= bb_up:
+        signals.append({"type": "sell", "src": "볼린저밴드",
+                        "msg": f"종가가 상단밴드({bb_up:,.0f}) 터치 — 평균회귀 매도 구간"})
+
+    # 스토캐스틱 과매도 골든크로스 / 과매수 데드크로스
+    if k_now <= 20 and golden_cross:
+        signals.append({"type": "buy", "src": "스토캐스틱",
+                        "msg": f"%K({k_now:.0f}) 과매도 + 골든크로스 — 강한 반등 신호"})
+    elif k_now <= 20:
+        signals.append({"type": "buy", "src": "스토캐스틱",
+                        "msg": f"%K({k_now:.0f}) 과매도 구간 — 반등 대기"})
+    if k_now >= 80 and dead_cross:
+        signals.append({"type": "sell", "src": "스토캐스틱",
+                        "msg": f"%K({k_now:.0f}) 과매수 + 데드크로스 — 강한 조정 신호"})
+    elif k_now >= 80:
+        signals.append({"type": "sell", "src": "스토캐스틱",
+                        "msg": f"%K({k_now:.0f}) 과매수 구간 — 차익 대기"})
+
+    # ── 결합 신호 (두 지표 동시 충족 = 고확률) ────────────────────────────────
+    combined = None
+    bb_buy   = price <= bb_lo
+    bb_sell  = price >= bb_up
+    st_buy   = k_now <= 20 and golden_cross
+    st_sell  = k_now >= 80 and dead_cross
+    if bb_buy and st_buy:
+        combined = {"type": "buy",
+                    "msg": "🚀 볼린저 하단 + 스토캐스틱 과매도 골든크로스 동시 충족 — 박스권 저점 고확률 매수"}
+    elif bb_sell and st_sell:
+        combined = {"type": "sell",
+                    "msg": "🔻 볼린저 상단 + 스토캐스틱 과매수 데드크로스 동시 충족 — 박스권 고점 고확률 매도"}
+
+    # ── 국면 필터 적용 ─────────────────────────────────────────────────────────
+    if is_ranging:
+        reason = "박스권 국면 → 역추세(평균회귀) 전략 유효"
+    else:
+        trend_name = "강세 추세" if regime == "trending_bull" else \
+                     "약세 추세" if regime == "trending_bear" else "추세"
+        reason = (f"{trend_name} 국면 → 역추세 전략 자동 비활성화. "
+                  f"추세 추종 지표(MA·MACD)를 사용하세요.")
+
+    return {
+        "active":  is_ranging,
+        "regime":  regime,
+        "reason":  reason,
+        "bb":      bb,
+        "stoch":   stoch,
+        "signals": signals,
+        "combined": combined,
+        "squeeze": squeeze,
+    }
+
+
+def plot_oscillators(
+    df: pd.DataFrame,
+    title: str = "",
+    show: bool = True,
+) -> go.Figure:
+    """
+    볼린저밴드(가격축) + 스토캐스틱(하단) 차트.
+    Row 1: 캔들 + 볼린저밴드 상·중·하단 (밴드 영역 음영)
+    Row 2: 스토캐스틱 %K / %D + 20·80 기준선
+    """
+    fig = make_subplots(
+        rows=2, cols=1,
+        shared_xaxes=True,
+        vertical_spacing=0.05,
+        subplot_titles=(
+            f"{title} — 볼린저밴드 (20, 2σ)",
+            "스토캐스틱 (%K 14, %D 3)",
+        ),
+        row_heights=[0.66, 0.34],
+    )
+
+    # ── 볼린저밴드 영역 ────────────────────────────────────────────────────────
+    if "BB_Upper" in df.columns:
+        fig.add_trace(go.Scatter(
+            x=df.index, y=df["BB_Upper"],
+            line=dict(color="rgba(148,163,184,0.5)", width=1),
+            name="상단밴드", showlegend=False,
+        ), row=1, col=1)
+        fig.add_trace(go.Scatter(
+            x=df.index, y=df["BB_Lower"],
+            line=dict(color="rgba(148,163,184,0.5)", width=1),
+            fill="tonexty", fillcolor="rgba(99,102,241,0.08)",
+            name="하단밴드", showlegend=False,
+        ), row=1, col=1)
+        fig.add_trace(go.Scatter(
+            x=df.index, y=df["BB_Mid"],
+            line=dict(color="#facc15", width=1, dash="dot"),
+            name="중심선(MA20)",
+        ), row=1, col=1)
+
+    # 캔들스틱
+    fig.add_trace(go.Candlestick(
+        x=df.index,
+        open=df["Open"], high=df["High"],
+        low=df["Low"],   close=df["Close"],
+        increasing_line_color="#22c55e",
+        decreasing_line_color="#ef4444",
+        name="주가", showlegend=False,
+    ), row=1, col=1)
+
+    # ── 스토캐스틱 ─────────────────────────────────────────────────────────────
+    if "Stoch_K" in df.columns:
+        fig.add_trace(go.Scatter(
+            x=df.index, y=df["Stoch_K"].round(1),
+            line=dict(color="#38bdf8", width=1.6), name="%K",
+        ), row=2, col=1)
+        fig.add_trace(go.Scatter(
+            x=df.index, y=df["Stoch_D"].round(1),
+            line=dict(color="#fb923c", width=1.4, dash="dot"), name="%D",
+        ), row=2, col=1)
+
+    for lvl, color in ((80, "rgba(239,68,68,0.4)"), (20, "rgba(34,197,94,0.4)")):
+        fig.add_hline(y=lvl, row=2, col=1,
+                      line=dict(color=color, dash="dash", width=1))
+    fig.add_hrect(y0=20, y1=80, row=2, col=1,
+                  fillcolor="rgba(255,255,255,0.03)", line_width=0)
+
+    fig.update_layout(
+        height=560,
+        template="plotly_dark",
+        paper_bgcolor="#0e1117",
+        plot_bgcolor="#0e1117",
+        font=dict(family="Noto Sans KR", color="#e2e8f0"),
+        xaxis_rangeslider_visible=False,
+        legend=dict(orientation="h", y=1.04, x=0,
+                    bgcolor="rgba(0,0,0,0)", font_size=11),
+        margin=dict(l=0, r=20, t=60, b=0),
+    )
+    fig.update_xaxes(showgrid=True, gridcolor="rgba(255,255,255,0.05)",
+                     rangebreaks=[dict(bounds=["sat", "mon"])])
+    fig.update_yaxes(showgrid=True, gridcolor="rgba(255,255,255,0.05)")
+    fig.update_yaxes(range=[0, 100], row=2, col=1)
+
+    if show:
+        fig.show()
+    return fig

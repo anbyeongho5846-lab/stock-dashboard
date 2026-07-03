@@ -11,22 +11,39 @@ https://stock-dashboard-xsn49fz4eyx8qgcv6i3lcp.streamlit.app
 - **배포**: Streamlit Community Cloud (GitHub 자동 배포)
 - **저장소**: https://github.com/anbyeongho5846-lab/stock-dashboard
 
-## 파일 구조
+## 파일 구조 (2026-07-03 멀티페이지 전환)
 ```
 stock_analyzer/
-├── app.py                  # 메인 Streamlit 앱 (11개 페이지 + 라우팅)
-├── analyzer.py             # 종목 분석 (캔들차트 + 기술지표)
+├── app.py                  # 진입점: set_page_config + CSS + st.navigation 등록만
+├── common.py               # 공통: CSS, page_header/chip, 포매터, 캐시 함수, stock_picker
+├── views/                  # 페이지별 모듈 (st.Page 콜러블)
+│   ├── market.py            # 🏠 시장 현황       /market   (기본 페이지)
+│   ├── sectors.py           # 🗂️ 섹터/테마       /sectors
+│   ├── market_sentiment.py  # 🧠 시장 감성       /sentiment
+│   ├── stock.py             # 📈 종목 분석       /stock
+│   ├── company.py           # 🏢 기업 분석       /company
+│   ├── investors.py         # 👥 투자자 동향     /investors
+│   ├── advanced.py          # 🔬 심화 분석       /advanced
+│   ├── backtest.py          # 🔄 백테스팅        /backtest
+│   ├── strategy_compare.py  # ⚖️ 전략 비교       /compare
+│   ├── ma_optimizer.py      # 🔍 MA 최적화       /optimizer
+│   ├── watchlist_scanner.py # 📡 종목 스캐너     /scanner
+│   ├── dart.py              # 📊 DART 스크리너   /dart
+│   ├── buy_timing.py        # 📌 매수 타이밍     /timing
+│   └── portfolio.py         # 💰 가상 투자       /portfolio
+├── analyzer.py             # 종목 분석 로직 (캔들차트 + 기술지표)
 ├── backtester.py           # 백테스팅
 ├── compare.py              # 전략 비교
 ├── optimizer.py            # MA 최적화
 ├── fundamental.py          # 기업 기본 분석 (yfinance/pykrx)
-├── dart_screener.py        # DART 기본적 분석 스크리너 (EPS/BPS/PER/PBR 밴드)
+├── dart_screener.py        # DART 기본적 분석 (EPS/BPS/PER/PBR 밴드)
 ├── ownership.py            # 투자자 동향
 ├── ranking.py              # 시장 현황 (네이버 스크래핑)
 ├── sector.py               # 섹터/테마 (네이버 스크래핑)
 ├── scanner.py              # 종목 스캐너
+├── regime.py / smart_money.py / alt_data.py / news.py / sentiment.py  # 심화·뉴스
 ├── virtual_portfolio.py    # 가상 투자 (Supabase 저장)
-├── kr_tickers.json         # 국내 종목 DB (KOSPI+KOSDAQ 3,957개)
+├── kr_tickers.json         # 국내 종목 DB (KOSPI+KOSDAQ 3,957개) — stock_picker가 사용
 ├── dart_corp_codes.json    # DART 고유번호 캐시 (자동생성, 7일 TTL)
 ├── requirements.txt        # Python 패키지
 ├── runtime.txt             # python-3.11 (클라우드 버전 고정)
@@ -35,22 +52,14 @@ stock_analyzer/
     └── secrets.toml        # 로컬 시크릿 (gitignore)
 ```
 
-## 현재 페이지 목록 (app.py 라우팅)
-| 페이지 | 함수 | 데이터 소스 |
-|---|---|---|
-| 🏠 시장 현황 | show_market() | 네이버 스크래핑 (30분 캐시) |
-| 📈 종목 분석 | show_analyzer() | pykrx → yfinance .KS fallback |
-| 🔄 백테스팅 | show_backtest() | yfinance |
-| ⚖️ 전략 비교 | show_compare() | yfinance |
-| 🔍 MA 최적화 | show_optimizer() | yfinance |
-| 🏢 기업 분석 | show_fundamental() | pykrx → yfinance .KS fallback |
-| 👥 투자자 동향 | show_ownership() | pykrx |
-| 🗂️ 섹터/테마 | show_sector() | 네이버 스크래핑 (30분 캐시) |
-| 📡 종목 스캐너 | show_scanner() | yfinance |
-| 📊 DART 스크리너 | show_dart_screener() | Open DART API + yfinance |
-| 💰 가상 투자 | show_virtual_portfolio() | Supabase + yfinance |
+## 멀티페이지 구조 규칙
+- `app.py`는 `st.Page(콜러블)` + `st.navigation(섹션 dict)`로 라우팅. 페이지마다 고유 URL(`/stock` 등) → 새로고침·북마크 유지됨.
+- 새 페이지 추가: `views/새파일.py`에 `show_xxx()` 작성 → `app.py`의 PAGES dict와 st.navigation 섹션에 등록.
+- 페이지 간 이동: `common.goto_stock(ticker)` → 종목 분석 페이지로 이동하며 종목 자동 선택 (`goto_ticker` 세션키).
+- 종목 입력: `common.stock_picker(key, ...)` — 국내는 이름 검색 selectbox, 미국은 '직접 입력'. 반환 `(ticker, is_kr)`. 종목분석/기업분석/투자자동향에 적용됨.
+- 검증 방법: `streamlit.testing.v1.AppTest`로 각 show_* 함수 렌더링 (래퍼 함수로 감싸서 from_function 사용).
 
-## 중요 설정값 (app.py)
+## 중요 설정값 (common.py)
 ```python
 # 네이버 스크래핑 캐시 — 30분 (IP차단 방지)
 @st.cache_data(ttl=1800)
@@ -61,6 +70,8 @@ def cached_sector(type_):     # sector.py
 @st.cache_data(ttl=3600)
 def cached_stock(...)         # analyzer.py
 def cached_fundamental(...)   # fundamental.py
+
+# 시간은 now_kst() 사용 (클라우드 서버가 UTC이므로 UTC+9 고정)
 ```
 
 ## 한국 주식 데이터 조회 전략

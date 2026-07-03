@@ -136,7 +136,7 @@ def show_signal_monitor():
             "매수신호": ", ".join(r["buys"]) if r["buys"] else "-",
             "의견":     f"{opinion_color.get(r['opinion'], '')} {r['opinion']}",
         })
-    st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
+    st.dataframe(pd.DataFrame(rows), width="stretch", hide_index=True)
 
     # ── 종목 분석 페이지로 이동 ───────────────────────────────────────────────
     gc1, gc2 = st.columns([3, 1])
@@ -145,7 +145,7 @@ def show_signal_monitor():
                                 [r["ticker"] for r in results], key="sm_goto")
     with gc2:
         st.markdown("<div style='margin-top:28px;'></div>", unsafe_allow_html=True)
-        if st.button("📈 종목 분석 열기", key="sm_goto_btn", use_container_width=True):
+        if st.button("📈 종목 분석 열기", key="sm_goto_btn", width="stretch"):
             goto_stock(goto_sel)
 
     # ── 매수 계획 계산기 ──────────────────────────────────────────────────────

@@ -175,7 +175,7 @@ def show_dart_screener():
                     opts,
                     key="dart_search_sel",
                 )
-                if st.button("이 종목 분석", key="dart_search_go", use_container_width=False):
+                if st.button("이 종목 분석", key="dart_search_go", width="content"):
                     idx = opts.index(picked)
                     st.session_state["dart_selected_ticker"] = hits[idx]["ticker"]
                     st.session_state["dart_selected_name"]   = hits[idx]["corp_name"]
@@ -292,7 +292,7 @@ def show_dart_screener():
                 band_df if band_df is not None else pd.DataFrame(),
                 show=False,
             )
-            st.plotly_chart(fig, use_container_width=True)
+            st.plotly_chart(fig, width="stretch")
         else:
             st.warning("주가 데이터를 가져오지 못했습니다.")
 
@@ -319,7 +319,7 @@ def show_dart_screener():
                     )
             drop = [c for c in ["fs_div"] if c in disp.columns]
             st.dataframe(disp.drop(columns=drop).set_index("연도"),
-                         use_container_width=True)
+                         width="stretch")
 
         if band_df is not None and not band_df.empty:
             with st.expander("📋 연간 PER/PBR 밴드 데이터", expanded=False):
@@ -335,7 +335,7 @@ def show_dart_screener():
                         bd[col] = bd[col].apply(
                             lambda v: f"{v:,.0f}" if pd.notna(v) else "-"
                         )
-                st.dataframe(bd.set_index("year"), use_container_width=True)
+                st.dataframe(bd.set_index("year"), width="stretch")
 
     # ── 탭2: 저평가 스크리너 ───────────────────────────────────────────────────
     with tab_screen:
@@ -364,7 +364,7 @@ def show_dart_screener():
 
             run_sc = st.button(
                 f"▶ 캐시 종목 스크리닝 실행 ({n_cached:,}개 종목, 즉시)",
-                use_container_width=True, key="dart_sc_run",
+                width="stretch", key="dart_sc_run",
             )
             st.caption(
                 "💡 재무 데이터가 캐시된 종목만 스크리닝합니다.  "
@@ -451,7 +451,7 @@ def show_dart_screener():
 
             # ── 버블 차트 ──────────────────────────────────────────────────────
             fig_sc = _plot_sc(results, show=False)
-            st.plotly_chart(fig_sc, use_container_width=True)
+            st.plotly_chart(fig_sc, width="stretch")
 
             # ── 결과 테이블 ────────────────────────────────────────────────────
             chip("종목별 결과 (점수 순)")
@@ -477,7 +477,7 @@ def show_dart_screener():
                 .set_properties(**{"text-align": "center"})
                 .hide(axis="index")
             )
-            st.dataframe(styled, use_container_width=True)
+            st.dataframe(styled, width="stretch")
 
             # ── 개별 상세 조회 (탭2 내 드릴다운) ─────────────────────────────
             st.markdown("---")
@@ -498,7 +498,7 @@ def show_dart_screener():
                         r_sel.get("band_df", pd.DataFrame()),
                         show=False,
                     )
-                    st.plotly_chart(fig_d, use_container_width=True)
+                    st.plotly_chart(fig_d, width="stretch")
                 else:
                     st.warning("주가 데이터를 가져오지 못했습니다.")
 

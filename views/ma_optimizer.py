@@ -34,7 +34,7 @@ def show_optimizer():
             shorts_str = st.text_input("단기 MA 후보 (공백 구분)", "3 5 10 15 20", key="opt_shorts")
         with c4:
             longs_str  = st.text_input("장기 MA 후보 (공백 구분)", "20 30 60 120", key="opt_longs")
-        run_opt = st.button("▶ 최적화 실행", use_container_width=True, key="opt_run")
+        run_opt = st.button("▶ 최적화 실행", width="stretch", key="opt_run")
 
     if "opt_result" not in st.session_state:
         st.session_state.opt_result = None
@@ -70,7 +70,7 @@ def show_optimizer():
                   results.iloc[0]["label"],
                   f"{results.iloc[0]['total_return']:+.1f}%")
 
-        st.plotly_chart(fig, use_container_width=True)
+        st.plotly_chart(fig, width="stretch")
 
         chip("전체 조합 결과")
         show_df = results[["label", "total_return", "excess",
@@ -83,4 +83,4 @@ def show_optimizer():
                   .map(_color_excess,  subset=["수익률(%)", "초과(%)"])
                   .set_properties(**{"text-align": "center"})
                   .hide(axis="index"))
-        st.dataframe(styled, use_container_width=True)
+        st.dataframe(styled, width="stretch")

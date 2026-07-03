@@ -38,7 +38,7 @@ def show_sentiment():
     gauge_col, info_col = st.columns([1, 1])
 
     with gauge_col:
-        st.plotly_chart(sentiment_gauge(score), use_container_width=True)
+        st.plotly_chart(sentiment_gauge(score), width="stretch")
 
     with info_col:
         st.markdown("#### 점수 해석 가이드")
@@ -54,7 +54,7 @@ def show_sentiment():
                 "버블 경계, 매도 타이밍 검토",
             ],
         }
-        st.dataframe(pd.DataFrame(guide_data).set_index("구간"), use_container_width=True)
+        st.dataframe(pd.DataFrame(guide_data).set_index("구간"), width="stretch")
 
         st.markdown("#### 현재 감지 키워드")
         kw1, kw2 = st.columns(2)

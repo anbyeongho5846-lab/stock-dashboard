@@ -46,7 +46,7 @@ def show_scanner():
             days = st.slider("데이터 기간 (일)", 60, 365, 120, key="scn_days")
         with c2:
             st.markdown("<div style='margin-top:8px;'></div>", unsafe_allow_html=True)
-            run_scn = st.button("▶ 스캔 실행", use_container_width=True, key="scn_run")
+            run_scn = st.button("▶ 스캔 실행", width="stretch", key="scn_run")
 
     if "scn_result" not in st.session_state:
         st.session_state.scn_result = None
@@ -82,7 +82,7 @@ def show_scanner():
 
         from scanner import plot_dashboard as _plot_scn
         fig = _plot_scn(results, show=False)
-        st.plotly_chart(fig, use_container_width=True)
+        st.plotly_chart(fig, width="stretch")
 
         chip("종목별 상세")
         rows = []
@@ -105,7 +105,7 @@ def show_scanner():
                   .map(_color_change,  subset=["등락"])
                   .set_properties(**{"text-align": "center"})
                   .hide(axis="index"))
-        st.dataframe(styled, use_container_width=True)
+        st.dataframe(styled, width="stretch")
 
         # ── 종목 분석 페이지로 이동 ──────────────────────────────────────────
         gc1, gc2 = st.columns([3, 1])
@@ -114,5 +114,5 @@ def show_scanner():
                                     [r["ticker"] for r in results], key="scn_goto")
         with gc2:
             st.markdown("<div style='margin-top:28px;'></div>", unsafe_allow_html=True)
-            if st.button("📈 종목 분석 열기", key="scn_goto_btn", use_container_width=True):
+            if st.button("📈 종목 분석 열기", key="scn_goto_btn", width="stretch"):
                 goto_stock(goto_sel)

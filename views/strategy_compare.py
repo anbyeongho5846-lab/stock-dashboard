@@ -38,7 +38,7 @@ def show_compare():
             st.markdown("**RSI 설정**")
             rsi_buy  = st.number_input("매수 기준", 10, 50, 30, key="cmp_rsi_buy")
             rsi_sell = st.number_input("매도 기준", 50, 90, 70, key="cmp_rsi_sell")
-        run_cmp = st.button("▶ 비교 실행", use_container_width=True, key="cmp_run")
+        run_cmp = st.button("▶ 비교 실행", width="stretch", key="cmp_run")
 
     if "cmp_result" not in st.session_state:
         st.session_state.cmp_result = None
@@ -88,10 +88,10 @@ def show_compare():
         styled = (tbl.style
                   .map(_color_change, subset=["수익률", "B&H 대비"])
                   .set_properties(**{"text-align": "center"}))
-        st.dataframe(styled, use_container_width=True)
+        st.dataframe(styled, width="stretch")
 
         col1, _ = st.columns([1, 3])
         col1.metric("📊 Buy & Hold 기준선", f"{bh:+.1f}%")
 
         st.markdown("---")
-        st.plotly_chart(fig, use_container_width=True)
+        st.plotly_chart(fig, width="stretch")

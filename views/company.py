@@ -91,7 +91,7 @@ def show_fundamental():
 
     from fundamental import plot as _plot_fund
     fig = _plot_fund(d, show=False)
-    st.plotly_chart(fig, use_container_width=True)
+    st.plotly_chart(fig, width="stretch")
 
     # 회사 설명
     summary = info.get("longBusinessSummary")

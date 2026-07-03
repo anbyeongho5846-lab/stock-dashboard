@@ -69,7 +69,7 @@ def show_sector():
 
     chart_event = st.plotly_chart(
         fig,
-        use_container_width=True,
+        width="stretch",
         on_select="rerun",
         key=f"sec_chart_{type_code}",
     )
@@ -96,7 +96,7 @@ def show_sector():
         if "등락률" in fmt_df.columns:
             styled = styled.map(_color_change, subset=["등락률"])
         styled = styled.hide(axis="index")
-        st.dataframe(styled, use_container_width=True)
+        st.dataframe(styled, width="stretch")
 
     # ── 드릴다운: 소속 종목 조회 ─────────────────────────────────────────────────
     st.markdown("---")
@@ -192,7 +192,7 @@ def show_sector():
                             ),
                             showlegend=False,
                         )
-                        st.plotly_chart(fig2, use_container_width=True)
+                        st.plotly_chart(fig2, width="stretch")
 
                     # 소속 종목 테이블
                     chip("종목 상세 테이블")
@@ -219,4 +219,4 @@ def show_sector():
                     if "등락률" in fmt_tbl.columns:
                         styled2 = styled2.map(_color_change, subset=["등락률"])
                     styled2 = styled2.hide(axis="index")
-                    st.dataframe(styled2, use_container_width=True)
+                    st.dataframe(styled2, width="stretch")

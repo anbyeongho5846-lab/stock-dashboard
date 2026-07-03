@@ -33,7 +33,7 @@ def show_backtest():
             capital = st.number_input("초기 자본 (원)", min_value=1_000_000,
                                       value=10_000_000, step=1_000_000, key="bt_capital",
                                       format="%d")
-        run_bt = st.button("▶ 백테스팅 실행", use_container_width=True, key="bt_run")
+        run_bt = st.button("▶ 백테스팅 실행", width="stretch", key="bt_run")
 
     if "bt_result" not in st.session_state:
         st.session_state.bt_result = None
@@ -68,7 +68,7 @@ def show_backtest():
         c6.metric("🔁 총 거래 수",    f"{m['n_trades']}회")
 
         st.markdown("---")
-        st.plotly_chart(fig, use_container_width=True)
+        st.plotly_chart(fig, width="stretch")
 
         if trades:
             chip("거래 내역")
@@ -89,4 +89,4 @@ def show_backtest():
                       .map(_color_change, subset=["수익률"])
                       .set_properties(**{"text-align": "center"})
                       .hide(axis="index"))
-            st.dataframe(styled, use_container_width=True)
+            st.dataframe(styled, width="stretch")

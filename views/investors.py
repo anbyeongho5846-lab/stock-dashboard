@@ -88,4 +88,4 @@ def show_ownership():
 
     from ownership import plot as _plot_own
     fig = _plot_own(price, inv_filtered, ticker.strip(), name, show=False)
-    st.plotly_chart(fig, use_container_width=True)
+    st.plotly_chart(fig, width="stretch")

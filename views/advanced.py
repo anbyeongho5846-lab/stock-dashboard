@@ -89,7 +89,7 @@ def show_advanced_analysis():
             "국면에 맞지 않는 지표를 사용하면 신호가 역효과를 냅니다."
         )
 
-        run_regime = st.button("▶ 국면 분석 실행", key="run_regime", use_container_width=True)
+        run_regime = st.button("▶ 국면 분석 실행", key="run_regime", width="stretch")
         if run_regime or st.session_state.get("regime_result"):
             if run_regime:
                 with st.spinner("주가 데이터 로딩 및 ADX 계산 중..."):
@@ -146,7 +146,7 @@ def show_advanced_analysis():
                 fig_r = plot_regime(df_adv, result,
                                     title=f"{adv_ticker} ({adv_days}일)",
                                     show=False)
-                st.plotly_chart(fig_r, use_container_width=True)
+                st.plotly_chart(fig_r, width="stretch")
 
             # ── 추천 지표 / 피해야 할 지표 ─────────────────────────────────────
             col_a, col_b = st.columns(2)
@@ -219,7 +219,7 @@ def show_advanced_analysis():
                 fig_osc = plot_oscillators(
                     df_adv, title=f"{adv_ticker} ({adv_days}일)", show=False
                 )
-                st.plotly_chart(fig_osc, use_container_width=True)
+                st.plotly_chart(fig_osc, width="stretch")
 
     # ── 탭2: 스마트 머니 + 매물대 ───────────────────────────────────────────
     with tab2:
@@ -235,7 +235,7 @@ def show_advanced_analysis():
         with col_vp2:
             investor_days = st.selectbox("투자자 동향 기간", [20, 30, 60], index=1, key="inv_days")
 
-        run_sm = st.button("▶ 스마트 머니 분석 실행", key="run_sm", use_container_width=True)
+        run_sm = st.button("▶ 스마트 머니 분석 실행", key="run_sm", width="stretch")
         if run_sm or st.session_state.get("sm_result"):
             if run_sm:
                 with st.spinner("데이터 로딩 중..."):
@@ -306,14 +306,14 @@ def show_advanced_analysis():
                 st.markdown("**🔴 저항선 (상위 매물대)**")
                 res_rows = [{"가격": f"{p:,.0f}원"} for p in key_lvls.get("resistance", [])[:5]]
                 if res_rows:
-                    st.dataframe(pd.DataFrame(res_rows), use_container_width=True, hide_index=True)
+                    st.dataframe(pd.DataFrame(res_rows), width="stretch", hide_index=True)
                 else:
                     st.caption("(없음)")
             with col_t2:
                 st.markdown("**🟢 지지선 (하위 매물대)**")
                 sup_rows = [{"가격": f"{p:,.0f}원"} for p in key_lvls.get("support", [])[:5]]
                 if sup_rows:
-                    st.dataframe(pd.DataFrame(sup_rows), use_container_width=True, hide_index=True)
+                    st.dataframe(pd.DataFrame(sup_rows), width="stretch", hide_index=True)
                 else:
                     st.caption("(없음)")
 
@@ -322,7 +322,7 @@ def show_advanced_analysis():
                 df_sm, vp, investor_df, key_lvls,
                 title=f"{adv_ticker} ({adv_days}일)", show=False,
             )
-            st.plotly_chart(fig_sm, use_container_width=True)
+            st.plotly_chart(fig_sm, width="stretch")
 
             if not is_kr:
                 st.info("ℹ️ 투자자별 순매수 데이터는 국내 종목(pykrx)만 지원합니다.")
@@ -393,7 +393,7 @@ def show_advanced_analysis():
                 )
 
             if has_naver:
-                run_trend = st.button("▶ 트렌드 조회", key="run_trend", use_container_width=True)
+                run_trend = st.button("▶ 트렌드 조회", key="run_trend", width="stretch")
                 if run_trend and keywords_raw.strip():
                     period_map = {"1년": 365, "6개월": 180, "3개월": 90}
                     start_dt   = (datetime.today() - timedelta(
@@ -435,7 +435,7 @@ def show_advanced_analysis():
                     title=f"검색 트렌드 vs {t_ticker} 주가",
                     show=False,
                 )
-                st.plotly_chart(fig_trend, use_container_width=True)
+                st.plotly_chart(fig_trend, width="stretch")
 
                 # 리드-래그 분석
                 with st.expander("📊 리드-래그 상관 분석 (검색량이 주가보다 얼마나 선행?)", expanded=False):
@@ -447,7 +447,7 @@ def show_advanced_analysis():
                     ll_df = calc_lead_lag(trend_df, price_for_trend)
                     if not ll_df.empty:
                         fig_ll = plot_lead_lag(ll_df, show=False)
-                        st.plotly_chart(fig_ll, use_container_width=True)
+                        st.plotly_chart(fig_ll, width="stretch")
                     else:
                         st.info("리드-래그 분석을 위한 데이터가 부족합니다.")
 
@@ -479,7 +479,7 @@ def show_advanced_analysis():
                             chip("검색 트렌드 선행성 요약")
                             st.dataframe(
                                 pd.DataFrame(best_rows),
-                                use_container_width=True,
+                                width="stretch",
                                 hide_index=True,
                             )
 
@@ -556,7 +556,7 @@ def show_advanced_analysis():
                             title=f"{sel_sector} 관련 검색 트렌드 vs {adv_ticker}",
                             show=False,
                         )
-                        st.plotly_chart(fig_ex, use_container_width=True)
+                        st.plotly_chart(fig_ex, width="stretch")
                 except Exception as e:
                     st.caption(f"트렌드 로딩 실패: {e}")
             else:

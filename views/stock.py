@@ -58,7 +58,7 @@ def show_analyzer():
     from analyzer import plot as _plot_chart
     title = f"{ticker.upper()} ({'KRX' if is_kr else 'US'})"
     fig = _plot_chart(df, title, show=False)
-    st.plotly_chart(fig, use_container_width=True)
+    st.plotly_chart(fig, width="stretch")
 
     # 최근 5일 가격 테이블
     with st.expander("📋 최근 거래 데이터 (5일)", expanded=False):
@@ -69,7 +69,7 @@ def show_analyzer():
         for col in ["시가", "고가", "저가", "종가"]:
             disp[col] = disp[col].apply(lambda v: f"{v:,.0f}")
         disp["거래량"] = disp["거래량"].apply(fmt_volume)
-        st.dataframe(disp, use_container_width=True)
+        st.dataframe(disp, width="stretch")
 
     # ── 뉴스 피드 ──────────────────────────────────────────────────────────────
     st.markdown("---")

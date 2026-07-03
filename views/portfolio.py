@@ -49,7 +49,7 @@ def show_virtual_portfolio():
 
     # ── 차트 (자산 구성 파이 + 종목별 수익률 바) ────────────────────────────────
     fig_pf = plot_portfolio(ev, show=False)
-    st.plotly_chart(fig_pf, use_container_width=True)
+    st.plotly_chart(fig_pf, width="stretch")
 
     # ── 보유 종목 테이블 ────────────────────────────────────────────────────────
     if ev["rows"]:
@@ -73,7 +73,7 @@ def show_virtual_portfolio():
                        .map(_color_change, subset=["수익률"])
                        .set_properties(**{"text-align": "center"})
                        .hide(axis="index"))
-        st.dataframe(styled_hold, use_container_width=True)
+        st.dataframe(styled_hold, width="stretch")
     else:
         st.info("보유 종목이 없습니다. 아래 [🛒 매수] 탭에서 종목을 매수해 보세요.")
 
@@ -105,7 +105,7 @@ def show_virtual_portfolio():
             )
         with sc3:
             st.markdown("<div style='margin-top:2px'></div>", unsafe_allow_html=True)
-            do_search = st.button("🔍 검색", key="vp_do_search", use_container_width=True)
+            do_search = st.button("🔍 검색", key="vp_do_search", width="stretch")
 
         if do_search:
             if not search_q.strip():
@@ -137,7 +137,7 @@ def show_virtual_portfolio():
                 picked = st.selectbox("검색 결과", opts, key="vp_sr_sel",
                                       label_visibility="collapsed")
             with rc2:
-                if st.button("✅ 선택", key="vp_pick", use_container_width=True):
+                if st.button("✅ 선택", key="vp_pick", width="stretch"):
                     idx  = opts.index(picked)
                     r    = sr[idx]
                     code = r.get("code") or r.get("ticker", "")
@@ -193,7 +193,7 @@ def show_virtual_portfolio():
             f" = **{est_buy_amt + est_buy_fee:,.0f}원**  |  현금 잔고: {p['cash']:,.0f}원"
         )
 
-        if st.button("✅ 매수 실행", key="vp_buy_exec", use_container_width=True):
+        if st.button("✅ 매수 실행", key="vp_buy_exec", width="stretch"):
             ok, msg = vp_buy(
                 p, buy_ticker.strip().upper(), buy_mkt_code,
                 int(buy_qty), float(buy_price),
@@ -273,7 +273,7 @@ def show_virtual_portfolio():
                 unsafe_allow_html=True,
             )
 
-            if st.button("✅ 매도 실행", key="vp_sell_exec", use_container_width=True):
+            if st.button("✅ 매도 실행", key="vp_sell_exec", width="stretch"):
                 ok, msg = vp_sell(
                     p, sell_h["ticker"], sell_h["market"],
                     int(sell_qty), float(sell_price),
@@ -319,7 +319,7 @@ def show_virtual_portfolio():
                          .map(_color_pnl,    subset=["손익"])
                          .set_properties(**{"text-align": "center"})
                          .hide(axis="index"))
-            st.dataframe(styled_tx, use_container_width=True)
+            st.dataframe(styled_tx, width="stretch")
 
     # ── 설정 탭 ────────────────────────────────────────────────────────────────
     with tab_cfg:
@@ -387,7 +387,7 @@ def show_virtual_portfolio():
                 st.warning("kr_tickers.json 파일이 없습니다. 갱신 버튼을 눌러 주세요.")
 
             if st.button("🔄 국내 종목 DB 갱신 (KOSPI+KOSDAQ)", key="vp_rebuild_db",
-                         use_container_width=True):
+                         width="stretch"):
                 with st.spinner("KOSPI + KOSDAQ 종목 목록 수집 중... (20~30초 소요)"):
                     ok, msg = rebuild_kr_ticker_db()
                 if ok:

@@ -27,7 +27,7 @@ def show_market():
         top_n = st.slider("표시 종목 수", 5, 30, 20, key="mkt_top")
     with col3:
         st.markdown("<div style='margin-top:28px;'></div>", unsafe_allow_html=True)
-        if st.button("🔄 데이터 갱신", key="mkt_refresh", use_container_width=False):
+        if st.button("🔄 데이터 갱신", key="mkt_refresh", width="content"):
             cached_rankings.clear()
 
     with st.spinner(f"{market} 순위 데이터 수집 중..."):
@@ -67,4 +67,4 @@ def show_market():
 
     from ranking import plot_dashboard as _plot_ranking
     fig = _plot_ranking(data, market, top_n, show=False)
-    st.plotly_chart(fig, use_container_width=True)
+    st.plotly_chart(fig, width="stretch")

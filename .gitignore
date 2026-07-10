@@ -1,17 +1,16 @@
-# 개인 데이터 (클라우드 DB로 대체)
+﻿# 媛쒖씤 ?곗씠??(?대씪?곕뱶 DB濡??泥?
 portfolio.json
 
-# 환경변수 / 시크릿
-.env
+# ?섍꼍蹂??/ ?쒗겕由?.env
 .streamlit/secrets.toml
 
-# Python 캐시
+# Python 罹먯떆
 __pycache__/
 *.pyc
 *.pyo
 *.pyd
 
-# 로그
+# 濡쒓렇
 *.log
 watchdog.log
 

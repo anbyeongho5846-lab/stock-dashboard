@@ -1,16 +1,17 @@
-﻿# 媛쒖씤 ?곗씠??(?대씪?곕뱶 DB濡??泥?
+# 개인 데이터 (실데이터는 Supabase에 저장, 로컬 fallback 파일)
 portfolio.json
 
-# ?섍꼍蹂??/ ?쒗겕由?.env
+# 환경변수 / 시크릿
+.env
 .streamlit/secrets.toml
 
-# Python 罹먯떆
+# Python 캐시
 __pycache__/
 *.pyc
 *.pyo
 *.pyd
 
-# 濡쒓렇
+# 로그
 *.log
 watchdog.log
 
@@ -22,5 +23,5 @@ desktop.ini
 .vscode/
 .idea/
 
-# dev scratch scripts
-_*.py
+# 개발용 스크래치 스크립트 (루트에만 적용 — views/__init__.py 등은 무시하면 안 됨)
+/_*.py

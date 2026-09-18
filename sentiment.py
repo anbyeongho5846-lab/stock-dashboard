@@ -1,5 +1,7 @@
+import html
+import re
+
 import requests
-from bs4 import BeautifulSoup
 import streamlit as st
 import plotly.graph_objects as go
 
@@ -23,39 +25,36 @@ _HEADERS = {
         "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
         "AppleWebKit/537.36 (KHTML, like Gecko) "
         "Chrome/120.0.0.0 Safari/537.36"
-    )
+    ),
+    "Referer": "https://m.stock.naver.com/",
 }
 
-_SOURCES = [
-    (
-        "https://finance.naver.com/news/mainnews.naver",
-        ["dd.articleSubject a", ".articleSubject a", ".newsList li a"],
-        "euc-kr",
-    ),
-    (
-        "https://finance.naver.com/news/news_list.naver?mode=LSS2D&section_id=101&section_id2=258",
-        ["dd.articleSubject a", ".title a", "li dt a"],
-        "euc-kr",
-    ),
-]
+# 네이버 모바일 증권 뉴스 API
+# (2026-09 개편: finance.naver.com 뉴스 페이지가 stock.naver.com SPA로 이전되어
+#  HTML 스크래핑이 깨짐 → 아래 JSON API 사용. tit=제목, ohnm=언론사, dt=일시)
+_NEWS_API = "https://m.stock.naver.com/api/news/list"
+
+
+def _clean_title(t: str) -> str:
+    """HTML 태그/엔티티 제거."""
+    t = re.sub(r"<[^>]+>", "", t)      # <b> 등 태그 제거
+    return html.unescape(t).strip()
 
 
 @st.cache_data(ttl=21600)  # 6시간 캐시 (오전·오후 각 1회)
 def fetch_market_news() -> list:
     headlines: list = []
-    for url, selectors, encoding in _SOURCES:
-        try:
-            r = requests.get(url, headers=_HEADERS, timeout=8)
-            r.encoding = encoding
-            soup = BeautifulSoup(r.text, "html.parser")
-            for sel in selectors:
-                tags = soup.select(sel)
-                found = [t.get_text(strip=True) for t in tags if len(t.get_text(strip=True)) >= 8]
-                headlines.extend(found)
-                if found:
-                    break
-        except Exception:
-            pass
+    try:
+        r = requests.get(_NEWS_API, headers=_HEADERS,
+                         params={"page": 1, "pageSize": 60}, timeout=8)
+        r.raise_for_status()
+        data = r.json()
+        for item in (data if isinstance(data, list) else []):
+            title = _clean_title(item.get("tit", ""))
+            if len(title) >= 8:
+                headlines.append(title)
+    except Exception:
+        pass
     return list(dict.fromkeys(headlines))[:60]
 
 

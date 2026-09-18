@@ -9,7 +9,6 @@ import argparse
 import logging
 import sys
 from datetime import datetime, timedelta
-from io import StringIO
 
 import pandas as pd
 import plotly.graph_objects as go
@@ -30,8 +29,14 @@ _HEADERS = {
         "AppleWebKit/537.36 (KHTML, like Gecko) "
         "Chrome/120.0.0.0 Safari/537.36"
     ),
-    "Referer": "https://finance.naver.com/",
+    "Referer": "https://m.stock.naver.com/",
 }
+
+# 네이버 모바일 증권 API — 투자자별 매매 동향
+# (2026-09 개편: finance.naver.com/item/frgn 스크래핑이 stock.naver.com SPA
+#  이전으로 깨짐 → 아래 내부 JSON API를 사용한다. pageSize 최대 60,
+#  page 파라미터는 무효라 과거는 bizdate 앵커로 이어붙인다.)
+_TREND_API = "https://m.stock.naver.com/api/stock/{code}/trend"
 
 
 # ── 데이터 수집 ───────────────────────────────────────────────────────────────
@@ -45,70 +50,69 @@ def fetch_price(ticker: str, start: str, end: str) -> pd.DataFrame:
     return df[["Open", "High", "Low", "Close", "Volume"]].dropna()
 
 
-def fetch_investor_trading(ticker: str) -> pd.DataFrame:
-    """
-    네이버증권 외국인·기관 순매수 데이터 스크래핑.
-    https://finance.naver.com/item/frgn.naver?code=005930
-    """
-    url = f"https://finance.naver.com/item/frgn.naver?code={ticker}"
-    r = requests.get(url, headers=_HEADERS, timeout=10)
-    html = r.content.decode("euc-kr", errors="replace")
-    tables = pd.read_html(StringIO(html))
+def _to_num(v) -> float:
+    """콤마·%·부호 섞인 문자열 → float."""
+    try:
+        return float(str(v).replace(",", "").replace("%", "").replace("+", ""))
+    except (ValueError, TypeError):
+        return float("nan")
 
-    # 날짜(YYYY.MM.DD) 패턴이 첫 컬럼에 있고 행수가 충분한 테이블 선택
-    target = None
-    for t in tables:
-        if len(t) < 5:
-            continue
-        first = t.iloc[:, 0].astype(str)
-        if first.str.match(r"\d{4}\.\d{2}\.\d{2}").any():
-            target = t
-            break
 
-    if target is None:
+def _fetch_trend_page(ticker: str, anchor: str | None = None) -> list:
+    """trend API 한 페이지(최대 60 거래일). anchor(bizdate) 이전까지 반환."""
+    params = {"pageSize": 60}
+    if anchor:
+        params["bizdate"] = anchor
+    r = requests.get(_TREND_API.format(code=ticker), headers=_HEADERS,
+                     params=params, timeout=12)
+    r.raise_for_status()
+    data = r.json()
+    return data if isinstance(data, list) else []
+
+
+def fetch_investor_trading(ticker: str, max_days: int = 180) -> pd.DataFrame:
+    """외국인·기관·개인 일별 순매수 — 네이버 모바일 API(/api/stock/{code}/trend).
+
+    한 콜당 최대 60 거래일이라, max_days만큼 확보될 때까지 bizdate 앵커로
+    과거를 이어붙인다. (중복 날짜는 dict로 제거)
+    """
+    records: dict[str, dict] = {}
+    anchor: str | None = None
+    try:
+        for _ in range(4):                 # 60일 × 최대 4콜 ≈ 240 거래일
+            batch = _fetch_trend_page(ticker, anchor)
+            if not batch:
+                break
+            before = len(records)
+            for rec in batch:
+                bd = rec.get("bizdate")
+                if bd:
+                    records[bd] = rec
+            if len(records) == before:     # 더 이상 새 날짜 없음
+                break
+            if len(records) >= max_days:
+                break
+            anchor = min(r["bizdate"] for r in batch)  # 다음 콜은 이 날짜 이전
+    except Exception:
+        if not records:
+            return pd.DataFrame()
+
+    if not records:
         return pd.DataFrame()
 
-    # MultiIndex 컬럼 평탄화
-    if isinstance(target.columns, pd.MultiIndex):
-        flat_cols = []
-        for col in target.columns:
-            parts = [str(c).strip() for c in col if str(c).strip()]
-            flat_cols.append("_".join(parts) if parts else "")
-        target.columns = flat_cols
-    else:
-        target.columns = [str(c).strip() for c in target.columns]
+    rows = [{
+        "date":          bd,
+        "종가":          _to_num(rec.get("closePrice")),
+        "거래량":        _to_num(rec.get("accumulatedTradingVolume")),
+        "외국인_순매수": _to_num(rec.get("foreignerPureBuyQuant")),
+        "기관_순매수":   _to_num(rec.get("organPureBuyQuant")),
+        "개인_순매수":   _to_num(rec.get("individualPureBuyQuant")),
+        "외인보유비율":  _to_num(rec.get("foreignerHoldRatio")),
+    } for bd, rec in records.items()]
 
-    df = target.copy()
-
-    # 날짜 인덱스 설정
-    date_col = df.columns[0]
-    df = df[df[date_col].astype(str).str.match(r"\d{4}\.\d{2}\.\d{2}", na=False)].copy()
-    if df.empty:
-        return pd.DataFrame()
-
-    df.index = pd.to_datetime(df[date_col], format="%Y.%m.%d", errors="coerce")
-    df = df[df.index.notna()].sort_index()
-    df = df.drop(columns=[date_col])
-
-    # 위치 기반 컬럼 이름 부여 (Naver frgn 테이블 고정 순서)
-    # 종가 | 전일비 | 등락률 | 거래량 | 외국인_순매수 | 기관_순매수 | 기관_보유 | 외인보유비율
-    col_names = ["종가", "전일비", "등락률", "거래량",
-                 "외국인_순매수", "기관_순매수", "기관_보유", "외인보유비율"]
-    n = min(len(df.columns), len(col_names))
-    df.columns = col_names[:n] + list(df.columns[n:])
-
-    # 숫자 변환
-    for col in df.columns:
-        df[col] = pd.to_numeric(
-            df[col].astype(str)
-                   .str.replace(",", "")
-                   .str.replace("%", "")
-                   .str.replace("+", "")
-                   .str.replace(r"[▲▼상하]", "", regex=True)
-                   .str.strip(),
-            errors="coerce",
-        )
-
+    df = pd.DataFrame(rows)
+    df.index = pd.to_datetime(df["date"], format="%Y%m%d", errors="coerce")
+    df = df[df.index.notna()].drop(columns=["date"]).sort_index()
     return df
 
 

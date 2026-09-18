@@ -24,7 +24,9 @@ _CORP_CACHE_PATH  = Path(__file__).parent / "dart_corp_codes.json"
 _CORP_NAME_PATH   = Path(__file__).parent / "dart_corp_names.json"   # ticker→corp_name 매핑
 _FIN_CACHE_PATH   = Path(__file__).parent / "dart_fin_cache.json"
 _CACHE_TTL_DAYS   = 30   # corp codes 캐시 TTL
-_FIN_CACHE_TTL    = 90   # 재무 데이터 캐시 TTL
+# 재무 캐시 TTL — DART 사업보고서는 연 1회(3~4월) 갱신되므로 1년 이상으로 둔다.
+# (짧으면 클라우드에서 캐시 만료 시 DART API 차단으로 개별 종목 분석이 전부 실패)
+_FIN_CACHE_TTL    = 400  # 재무 데이터 캐시 TTL (일)
 
 # DART API에 연결할 수 없을 때 발생하는 예외
 class DartNetworkError(Exception):

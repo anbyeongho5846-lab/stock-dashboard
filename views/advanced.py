@@ -35,24 +35,10 @@ def _cached_investor_flow(ticker: str, days: int) -> pd.DataFrame:
     return fetch_investor_flow(ticker, days)
 
 
-@st.cache_data(ttl=3600)
-def _cached_naver_trend(
-    keywords_key: str,
-    client_id: str,
-    client_secret: str,
-    start_date: str,
-    time_unit: str,
-) -> pd.DataFrame:
-    from alt_data import fetch_naver_trend
-    keywords = [k.strip() for k in keywords_key.split("|") if k.strip()]
-    return fetch_naver_trend(keywords, client_id, client_secret,
-                             start_date=start_date, time_unit=time_unit)
-
-
 def show_advanced_analysis():
     page_header(
         "🔬", "심화 분석",
-        "시장 국면 판별기 · 스마트 머니 + 매물대 · 대체 데이터(검색 트렌드/수출)",
+        "시장 국면 판별기 · 스마트 머니 + 매물대 · 수출 데이터",
     )
 
     # ── 공통 입력 ──────────────────────────────────────────────────────────────
@@ -77,7 +63,7 @@ def show_advanced_analysis():
     tab1, tab2, tab3 = st.tabs([
         "🎯 시장 국면 판별기",
         "💰 스마트 머니 + 매물대",
-        "📡 대체 데이터",
+        "🚢 수출 데이터",
     ])
 
     # ── 탭1: 시장 국면 판별기 ────────────────────────────────────────────────
@@ -334,160 +320,17 @@ def show_advanced_analysis():
                 )
 
     # ── 탭3: 대체 데이터 ─────────────────────────────────────────────────────
+    # ── 탭3: 수출 데이터 ─────────────────────────────────────────────────────
     with tab3:
-        chip("대체 데이터 (Alternative Data)")
+        chip("수출 데이터 (Alternative Data)")
         st.caption(
-            "재무제표보다 **3개월 선행**하는 신호를 포착합니다.  \n"
-            "특정 제품의 검색량이 폭증하면 → 어닝 서프라이즈 징조.  \n"
-            "수출 데이터가 늘면 → 관련 수혜주 선반영."
+            "재무제표보다 **먼저** 공개되는 신호를 활용합니다.  \n"
+            "관세청 수출 데이터가 늘면 → 관련 수혜주 실적이 선반영됩니다."
         )
 
-        alt_tab1, alt_tab2 = st.tabs(["🔍 네이버 검색 트렌드", "🚢 수출 데이터 분석"])
+        from alt_data import EXPORT_SECTORS, _CUSTOMS_STAT_URL, _KITA_STAT_URL
 
-        # ── 검색 트렌드 ─────────────────────────────────────────────────────────
-        with alt_tab1:
-            # Naver API 키 확인
-            try:
-                naver_id     = st.secrets["naver"]["client_id"]
-                naver_secret = st.secrets["naver"]["client_secret"]
-                has_naver    = bool(naver_id and naver_secret)
-            except Exception:
-                has_naver    = False
-                naver_id     = ""
-                naver_secret = ""
-
-            if not has_naver:
-                st.warning(
-                    "**네이버 API 키 미설정** — 검색 트렌드를 사용하려면 아래 절차를 따르세요.\n\n"
-                    "1. [네이버 개발자센터](https://developers.naver.com/) 접속 → 애플리케이션 등록  \n"
-                    "2. **데이터랩(검색어 트렌드)** API 사용 신청  \n"
-                    "3. Streamlit Cloud `Settings → Secrets`에 추가:  \n"
-                    "```toml\n[naver]\nclient_id = \"YOUR_CLIENT_ID\"\nclient_secret = \"YOUR_CLIENT_SECRET\"\n```  \n"
-                    "4. 로컬 `.streamlit/secrets.toml`에도 동일하게 추가"
-                )
-                st.info(
-                    "💡 **로컬 테스트**: 위 설정 후 아래 화면이 바로 활성화됩니다.  \n"
-                    "클라우드에서도 Naver API는 **해외 서버에서 접근 가능**합니다."
-                )
-
-            # 키워드 입력
-            kw_col1, kw_col2, kw_col3 = st.columns([3, 1, 1])
-            with kw_col1:
-                default_kw = ""
-                keywords_raw = st.text_input(
-                    "검색 키워드 (쉼표로 구분, 최대 5개)",
-                    value=default_kw,
-                    placeholder="예: 갤럭시, 아이폰, 삼성전자",
-                    key="alt_keywords",
-                    disabled=not has_naver,
-                )
-            with kw_col2:
-                trend_period = st.selectbox(
-                    "기간", ["1년", "6개월", "3개월"], index=0,
-                    key="trend_period", disabled=not has_naver,
-                )
-            with kw_col3:
-                trend_unit = st.selectbox(
-                    "집계 단위", ["week", "month"], index=0,
-                    key="trend_unit", disabled=not has_naver,
-                )
-
-            if has_naver:
-                run_trend = st.button("▶ 트렌드 조회", key="run_trend", width="stretch")
-                if run_trend and keywords_raw.strip():
-                    period_map = {"1년": 365, "6개월": 180, "3개월": 90}
-                    start_dt   = (datetime.today() - timedelta(
-                        days=period_map.get(trend_period, 365)
-                    )).strftime("%Y-%m-%d")
-
-                    keywords_list = [k.strip() for k in keywords_raw.split(",") if k.strip()]
-                    kw_key = "|".join(keywords_list)
-
-                    with st.spinner("네이버 데이터랩 조회 중..."):
-                        try:
-                            trend_df = _cached_naver_trend(
-                                kw_key, naver_id, naver_secret,
-                                start_dt, trend_unit,
-                            )
-                        except Exception as e:
-                            st.error(f"API 오류: {e}")
-                            trend_df = pd.DataFrame()
-
-                    if trend_df.empty:
-                        st.warning("데이터가 없습니다. 키워드를 확인하세요.")
-                    else:
-                        st.session_state["trend_df"]     = trend_df
-                        st.session_state["trend_ticker"] = adv_ticker
-                        st.session_state["trend_days"]   = adv_days
-
-            if "trend_df" in st.session_state and not st.session_state["trend_df"].empty:
-                trend_df = st.session_state["trend_df"]
-                t_ticker = st.session_state.get("trend_ticker", adv_ticker)
-                t_days   = st.session_state.get("trend_days", adv_days)
-
-                # 주가 데이터
-                price_for_trend = _cached_adv_price(t_ticker, t_days, detect_market(t_ticker))
-
-                from alt_data import plot_trend_vs_price, calc_lead_lag, plot_lead_lag
-                fig_trend = plot_trend_vs_price(
-                    trend_df, price_for_trend,
-                    ticker=t_ticker,
-                    title=f"검색 트렌드 vs {t_ticker} 주가",
-                    show=False,
-                )
-                st.plotly_chart(fig_trend, width="stretch")
-
-                # 리드-래그 분석
-                with st.expander("📊 리드-래그 상관 분석 (검색량이 주가보다 얼마나 선행?)", expanded=False):
-                    st.caption(
-                        "lag < 0 : 검색량 증가가 주가 상승보다 **N주 앞서 발생** (선행 지표)  \n"
-                        "lag > 0 : 주가 상승 후 검색량 증가 (후행)  \n"
-                        "상관계수 0.3 이상 = 유의미한 관계"
-                    )
-                    ll_df = calc_lead_lag(trend_df, price_for_trend)
-                    if not ll_df.empty:
-                        fig_ll = plot_lead_lag(ll_df, show=False)
-                        st.plotly_chart(fig_ll, width="stretch")
-                    else:
-                        st.info("리드-래그 분석을 위한 데이터가 부족합니다.")
-
-                # 최고 선행 구간 표시
-                if not price_for_trend.empty:
-                    from alt_data import calc_lead_lag
-                    ll_df2 = calc_lead_lag(trend_df, price_for_trend)
-                    if not ll_df2.empty:
-                        best_rows = []
-                        for col in ll_df2.columns:
-                            valid = ll_df2[col].dropna()
-                            if valid.empty:
-                                continue
-                            best_lag  = int(valid.idxmin())   # 가장 강한 상관 lag
-                            best_corr = float(valid.min())
-                            # 선행(음수 lag, 양의 상관) 찾기
-                            neg_lags  = valid[valid.index < 0]
-                            if not neg_lags.empty:
-                                best_lead_lag  = int(neg_lags.idxmax())
-                                best_lead_corr = float(neg_lags.max())
-                                if best_lead_corr > 0.2:
-                                    best_rows.append({
-                                        "키워드":     col,
-                                        "최적 선행":  f"{abs(best_lead_lag)}주 전",
-                                        "상관계수":   f"{best_lead_corr:.2f}",
-                                        "해석":       "🟢 선행 지표" if best_lead_corr > 0.3 else "⬜ 약한 선행",
-                                    })
-                        if best_rows:
-                            chip("검색 트렌드 선행성 요약")
-                            st.dataframe(
-                                pd.DataFrame(best_rows),
-                                width="stretch",
-                                hide_index=True,
-                            )
-
-        # ── 수출 데이터 ──────────────────────────────────────────────────────────
-        with alt_tab2:
-            from alt_data import EXPORT_SECTORS, _CUSTOMS_STAT_URL, _KITA_STAT_URL
-
-            st.markdown("""
+        st.markdown("""
 **관세청은 매월 1일·11일·21일에 10일 단위 수출 현황을 발표**합니다.
 이를 분석하면 관련 수혜주의 실적을 실시간으로 역산할 수 있습니다.
 
@@ -496,13 +339,13 @@ def show_advanced_analysis():
 > 변압기 수출 증가 → 현대일렉트릭·효성중공업 수혜
 """)
 
-            sel_sector = st.selectbox(
-                "섹터 선택", list(EXPORT_SECTORS.keys()), key="export_sector"
-            )
-            sector_info = EXPORT_SECTORS[sel_sector]
+        sel_sector = st.selectbox(
+            "섹터 선택", list(EXPORT_SECTORS.keys()), key="export_sector"
+        )
+        sector_info = EXPORT_SECTORS[sel_sector]
 
-            # 섹터 정보 카드
-            st.markdown(f"""
+        # 섹터 정보 카드
+        st.markdown(f"""
 <div style="
     background:#1a2035; border:1px solid rgba(255,255,255,0.08);
     border-radius:10px; padding:16px 20px; margin:12px 0;
@@ -514,19 +357,19 @@ def show_advanced_analysis():
 </div>
 """, unsafe_allow_html=True)
 
-            col_ex1, col_ex2 = st.columns(2)
-            with col_ex1:
-                st.markdown("#### 📊 공식 데이터 소스")
-                st.markdown(f"""
+        col_ex1, col_ex2 = st.columns(2)
+        with col_ex1:
+            st.markdown("#### 📊 공식 데이터 소스")
+            st.markdown(f"""
 - **관세청 수출입 무역통계**: [customs.go.kr]({_CUSTOMS_STAT_URL})
 - **무역협회 KITA 통계**: [stat.kita.net]({_KITA_STAT_URL})
 - **관세청 Open API**: [unipass.customs.go.kr](https://unipass.customs.go.kr/ets/)
 
 > API 키 발급 후 `secrets.toml`에 `[customs] api_key` 추가하면 자동 연동됩니다.
 """)
-            with col_ex2:
-                st.markdown("#### 📅 발표 일정")
-                st.markdown("""
+        with col_ex2:
+            st.markdown("#### 📅 발표 일정")
+            st.markdown("""
 | 날짜 | 내용 |
 |------|------|
 | 매월 1일 | 전월 확정 수출 통계 |
@@ -535,32 +378,3 @@ def show_advanced_analysis():
 
 **활용법**: 수출 YoY 증가율 ≥ 20% 이상인 섹터의 대표 종목에 주목하세요.
 """)
-
-            # 네이버 데이터랩 연결 (키 있으면 수출 관련 키워드 트렌드 표시)
-            if has_naver:
-                st.markdown("---")
-                st.markdown(f"**🔍 '{sel_sector}' 관련 검색 트렌드** (네이버 데이터랩)")
-                export_kw = sector_info["keywords"]
-                kw_key_ex = "|".join(export_kw)
-                start_ex  = (datetime.today() - timedelta(days=365)).strftime("%Y-%m-%d")
-                try:
-                    trend_ex = _cached_naver_trend(
-                        kw_key_ex, naver_id, naver_secret, start_ex, "month"
-                    )
-                    if not trend_ex.empty:
-                        price_for_ex = _cached_adv_price(adv_ticker, 365, is_kr)
-                        from alt_data import plot_trend_vs_price
-                        fig_ex = plot_trend_vs_price(
-                            trend_ex, price_for_ex,
-                            ticker=adv_ticker,
-                            title=f"{sel_sector} 관련 검색 트렌드 vs {adv_ticker}",
-                            show=False,
-                        )
-                        st.plotly_chart(fig_ex, width="stretch")
-                except Exception as e:
-                    st.caption(f"트렌드 로딩 실패: {e}")
-            else:
-                st.info(
-                    "💡 네이버 API 키를 설정하면 '검색 트렌드' 탭에서 수출 섹터 키워드 트렌드를 "
-                    "자동으로 연결해 보여줍니다."
-                )

@@ -5,13 +5,22 @@
 페이지 코드는 views/ 폴더에, 공통 헬퍼는 common.py에 있습니다.
 """
 
+from pathlib import Path
+
 import streamlit as st
+from PIL import Image
 
 # ── 페이지 설정 ───────────────────────────────────────────────────────────────
 
+# 브라우저 탭 파비콘 (assets/favicon.png). 파일이 없으면 이모지로 폴백.
+try:
+    _FAVICON = Image.open(Path(__file__).parent / "assets" / "favicon.png")
+except Exception:
+    _FAVICON = "📈"
+
 st.set_page_config(
     page_title="주식 분석 대시보드",
-    page_icon="📈",
+    page_icon=_FAVICON,
     layout="wide",
     initial_sidebar_state="expanded",
 )

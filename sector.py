@@ -7,10 +7,8 @@
 """
 
 import argparse
-import re as _re
 import sys
 from datetime import datetime
-from io import StringIO
 
 import pandas as pd
 import plotly.graph_objects as go
@@ -29,156 +27,108 @@ _HEADERS = {
         "AppleWebKit/537.36 (KHTML, like Gecko) "
         "Chrome/120.0.0.0 Safari/537.36"
     ),
-    "Referer": "https://finance.naver.com/",
+    "Referer": "https://m.stock.naver.com/",
 }
 
 _TYPE_LABEL = {"upjong": "업종", "theme": "테마"}
 
-# 네이버 sise_group 테이블 실제 구조 (위치 기반)
-# 0: 업종명/테마명  1: 등락률(%)  2: 전체종목수  3: 상승  4: 하락  5: 보합  6: 차트
-_POS_COLS = ["섹터명", "등락률", "종목수", "상승수", "하락수", "보합수", "차트"]
-
-# 업종/테마 상세 링크에서 no= 파라미터 추출
-_SECTOR_NO_RE = _re.compile(
-    r'sise_group_detail\.naver\?type=\w+&(?:amp;)?no=(\d+)[^>]*>([^<\n]+)<',
-    _re.IGNORECASE,
-)
+# 네이버 모바일 증권 JSON API
+# (2026-09 개편: finance.naver.com sise_group 페이지가 stock.naver.com SPA로
+#  이전되어 표 스크래핑이 깨짐 → 아래 내부 API를 사용한다.)
+_MOBILE_API = "https://m.stock.naver.com/api/stocks"
+# 앱 내부 코드(upjong/theme) → API 리소스명
+_API_KIND = {"upjong": "industry", "theme": "theme"}
 
 
-# ── 데이터 수집 ───────────────────────────────────────────────────────────────
+# ── 데이터 수집 (네이버 모바일 API) ──────────────────────────────────────────
+
+def _to_int(v) -> int:
+    try:
+        return int(str(v).replace(",", ""))
+    except (ValueError, TypeError):
+        return 0
+
+
+def _to_float(v) -> float:
+    try:
+        return float(str(v).replace(",", "").replace("+", ""))
+    except (ValueError, TypeError):
+        return float("nan")
+
+
+def _api_get(path: str, page: int, page_size: int = 100) -> dict:
+    r = requests.get(f"{_MOBILE_API}/{path}", headers=_HEADERS,
+                     params={"page": page, "pageSize": page_size}, timeout=15)
+    r.raise_for_status()
+    return r.json()
+
 
 def fetch_sector(type_: str = "upjong") -> pd.DataFrame:
-    """네이버증권 업종/테마별 시세 스크래핑."""
-    url = f"https://finance.naver.com/sise/sise_group.naver?type={type_}"
-    r = requests.get(url, headers=_HEADERS, timeout=15)
-    html = r.content.decode("euc-kr", errors="replace")
+    """업종/테마별 시세 — 네이버 모바일 API의 groups 목록."""
+    kind = _API_KIND.get(type_, "industry")
+    groups: list = []
+    try:
+        for page in range(1, 6):          # 최대 500개 (테마 264개 → 3페이지)
+            js = _api_get(kind, page)
+            g = js.get("groups", [])
+            if not g:
+                break
+            groups.extend(g)
+            if len(groups) >= js.get("totalCount", 0):
+                break
+    except Exception:
+        if not groups:
+            return pd.DataFrame()
 
-    # 섹터별 상세 페이지 번호 추출 (드릴다운용)
-    sector_nos: dict[str, str] = {}
-    for m in _SECTOR_NO_RE.finditer(html):
-        no, name = m.group(1), m.group(2).strip()
-        if name and len(name) > 1:
-            sector_nos[name] = no
-
-    tables = pd.read_html(StringIO(html), thousands=",")
-
-    df = None
-    for t in tables:
-        if len(t) < 5 or t.shape[1] < 2:
+    rows = []
+    for g in groups:
+        name = g.get("name", "")
+        if not name:
             continue
-        # 섹터명 컬럼: 문자열이고 길이가 2자 이상인 행이 5개 이상
-        first = t.iloc[:, 0].astype(str).str.strip()
-        valid = first[~first.str.match(r"^\d+\.?\d*$") & (first.str.len() > 1)]
-        if len(valid) >= 5:
-            df = t
-            break
-
-    if df is None:
-        return pd.DataFrame()
-
-    # 위치 기반 컬럼 이름 부여 (Naver sise_group 고정 순서)
-    n = min(len(df.columns), len(_POS_COLS))
-    df.columns = _POS_COLS[:n] + [f"col_{i}" for i in range(n, len(df.columns))]
-
-    if "섹터명" not in df.columns:
-        return pd.DataFrame()
-
-    # 유효 행 필터
-    df = df[df["섹터명"].astype(str).str.strip().str.len() > 1]
-    df = df[~df["섹터명"].astype(str).str.contains(
-        r"업종명|테마명|그룹명|nan|NaN|N/A", na=False)]
-    df = df.dropna(subset=["섹터명"])
-
-    # 숫자 변환
-    for col in ["등락률", "종목수", "상승수", "하락수", "보합수"]:
-        if col in df.columns:
-            df[col] = pd.to_numeric(
-                df[col].astype(str)
-                       .str.replace(",", "")
-                       .str.replace("%", "")
-                       .str.replace("+", "")
-                       .str.replace(r"[▲▼상하↑↓]", "", regex=True)
-                       .str.strip(),
-                errors="coerce",
-            )
-
-    # 드릴다운용 sector_no 컬럼 추가
-    if sector_nos:
-        df["sector_no"] = df["섹터명"].map(sector_nos)
-
-    return df.reset_index(drop=True)
+        rows.append({
+            "섹터명":   name,
+            "등락률":   _to_float(g.get("changeRate")),
+            "종목수":   _to_int(g.get("totalCount")),
+            "상승수":   _to_int(g.get("riseCount")),
+            "하락수":   _to_int(g.get("fallCount")),
+            "보합수":   _to_int(g.get("steadyCount")),
+            "sector_no": str(g.get("no", "")),   # 드릴다운용
+        })
+    return pd.DataFrame(rows).reset_index(drop=True)
 
 
 def fetch_sector_detail(type_: str, no: str) -> pd.DataFrame:
-    """업종/테마 상세 페이지 — 소속 종목 목록 스크래핑."""
-    url = "https://finance.naver.com/sise/sise_group_detail.naver"
-    r = requests.get(url, headers=_HEADERS,
-                     params={"type": type_, "no": no}, timeout=15)
-    html = r.content.decode("euc-kr", errors="replace")
-
+    """업종/테마 소속 종목 목록 — /api/stocks/{industry|theme}/{no}."""
+    kind = _API_KIND.get(type_, "industry")
+    stocks: list = []
     try:
-        tables = pd.read_html(StringIO(html), thousands=",")
+        for page in range(1, 11):         # 최대 1,000종목
+            js = _api_get(f"{kind}/{no}", page)
+            s = js.get("stocks", [])
+            if not s:
+                break
+            stocks.extend(s)
+            if len(stocks) >= js.get("totalCount", 0):
+                break
     except Exception:
-        return pd.DataFrame()
+        if not stocks:
+            return pd.DataFrame()
 
-    df = None
-    for t in tables:
-        if len(t) < 3 or t.shape[1] < 4:
+    rows = []
+    for s in stocks:
+        name = s.get("stockName", "")
+        if not name:
             continue
-        first = t.iloc[:, 0].astype(str).str.strip()
-        # 첫 컬럼에 한글 종목명이 3개 이상 있으면 해당 테이블
-        valid = first[
-            ~first.str.match(r"^[\d,.\-\s]+$") &
-            (first.str.len() > 1) &
-            ~first.isin(["nan", "NaN", "N/A"])
-        ]
-        if len(valid) >= 3:
-            df = t
-            break
-
-    if df is None:
-        return pd.DataFrame()
-
-    # MultiIndex 평탄화
-    if isinstance(df.columns, pd.MultiIndex):
-        df.columns = [
-            "_".join(str(c).strip() for c in col if str(c).strip())
-            for col in df.columns
-        ]
-    else:
-        df.columns = [str(c).strip() for c in df.columns]
-
-    # 컬럼 이름 정규화
-    rename = {}
-    for c in df.columns:
-        if any(k in c for k in ["종목", "이름"]): rename[c] = "종목명"
-        elif "현재가" in c:                        rename[c] = "현재가"
-        elif "등락률" in c:                        rename[c] = "등락률"
-        elif "거래량" in c:                        rename[c] = "거래량"
-        elif "시가총액" in c:                      rename[c] = "시가총액"
-        elif "전일비" in c:                        rename[c] = "전일비"
-    df = df.rename(columns=rename)
-
-    # 유효 행 필터
-    if "종목명" in df.columns:
-        df = df[df["종목명"].notna()]
-        df = df[~df["종목명"].astype(str).str.match(r"^(종목명|nan|N/A|\s*)$")]
-        df = df[df["종목명"].astype(str).str.strip().str.len() > 0]
-
-    # 숫자 변환
-    for col in ["현재가", "등락률", "거래량", "시가총액"]:
-        if col in df.columns:
-            df[col] = pd.to_numeric(
-                df[col].astype(str)
-                       .str.replace(",", "")
-                       .str.replace("%", "")
-                       .str.replace("+", "")
-                       .str.replace(r"[▲▼↑↓]", "", regex=True)
-                       .str.strip(),
-                errors="coerce",
-            )
-
-    return df.reset_index(drop=True)
+        rows.append({
+            "종목명":   name,
+            "현재가":   _to_int(s.get("closePriceRaw") or s.get("closePrice")),
+            "등락률":   _to_float(s.get("fluctuationsRatio")),
+            "거래량":   _to_int(s.get("accumulatedTradingVolumeRaw")
+                             or s.get("accumulatedTradingVolume")),
+            # marketValueRaw(원) → 억원 (뷰에서 ×1e8 후 포맷하므로 억원 단위로 저장)
+            "시가총액": _to_int(s.get("marketValueRaw")) / 1e8,
+        })
+    return pd.DataFrame(rows).reset_index(drop=True)
 
 
 # ── 출력 ─────────────────────────────────────────────────────────────────────

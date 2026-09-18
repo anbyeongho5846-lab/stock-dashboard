@@ -29,106 +29,101 @@ _HEADERS = {
         "AppleWebKit/537.36 (KHTML, like Gecko) "
         "Chrome/120.0.0.0 Safari/537.36"
     ),
-    "Referer": "https://finance.naver.com/",
+    "Referer": "https://m.stock.naver.com/",
 }
 
-# 네이버증권 시세 URL 맵
-_MARKET_PARAM = {"KOSPI": "KOSPI", "KOSDAQ": "KOSDAQ"}
-_NAVER_SISE   = "https://finance.naver.com/sise/sise_market_sum.naver"
+# 네이버 모바일 증권 JSON API
+# (2026-09 개편: finance.naver.com 시세 페이지가 stock.naver.com SPA로 이전되어
+#  표 스크래핑 대신 아래 내부 API를 사용한다.)
+_MOBILE_API = "https://m.stock.naver.com/api/stocks"
 
 
-# ── 데이터 수집 ───────────────────────────────────────────────────────────────
+# ── 데이터 수집 (네이버 모바일 API) ──────────────────────────────────────────
 
-def _scrape_table(url: str, params: dict | None = None, table_idx: int = 1) -> pd.DataFrame:
-    r = requests.get(url, headers=_HEADERS, params=params, timeout=15)
-    html = r.content.decode("euc-kr", errors="replace")
-    tables = pd.read_html(StringIO(html), thousands=",")
-    if not tables or len(tables) <= table_idx:
-        return pd.DataFrame()
-    return tables[table_idx]
+def _to_int(v) -> int:
+    try:
+        return int(str(v).replace(",", ""))
+    except (ValueError, TypeError):
+        return 0
 
 
-def _scrape_rise_fall(market: str = "KOSPI", rise: bool = True) -> pd.DataFrame:
-    """등락률 상위(rise=True) / 하위(rise=False)."""
-    path = "sise_rise" if rise else "sise_fall"
-    url  = f"https://finance.naver.com/sise/{path}.naver"
-    r = requests.get(url, headers=_HEADERS, params={"sosok": "0" if market == "KOSPI" else "1"}, timeout=15)
-    html = r.content.decode("euc-kr", errors="replace")
-    tables = pd.read_html(StringIO(html), thousands=",")
-
-    df = None
-    for t in tables:
-        if t.shape[1] >= 6 and len(t) > 5:
-            df = t
-            break
-    if df is None:
-        return pd.DataFrame()
-
-    # 컬럼 정규화
-    df.columns = [str(c) for c in df.columns]
-    rename = {}
-    for c in df.columns:
-        if "종목" in c or "이름" in c or "name" in c.lower(): rename[c] = "종목명"
-        elif "현재" in c or "가격" in c:                       rename[c] = "현재가"
-        elif "등락률" in c:                                    rename[c] = "등락률"
-        elif "거래량" in c:                                    rename[c] = "거래량"
-        elif "시가총액" in c:                                  rename[c] = "시가총액"
-        elif "N" == c or "순위" in c:                          rename[c] = "순위"
-    df = df.rename(columns=rename)
-    df = df.dropna(subset=["종목명"] if "종목명" in df.columns else df.columns[:1])
-    df = df[df["종목명"].notna() & (df["종목명"] != "종목명")]
-
-    for col in ["현재가", "등락률", "거래량", "시가총액"]:
-        if col in df.columns:
-            df[col] = pd.to_numeric(
-                df[col].astype(str).str.replace(",", "").str.replace("%", "").str.replace("+", ""),
-                errors="coerce"
-            )
-    return df.reset_index(drop=True)
+def _to_float(v) -> float:
+    try:
+        return float(str(v).replace(",", "").replace("+", ""))
+    except (ValueError, TypeError):
+        return float("nan")
 
 
-def _scrape_volume(market: str = "KOSPI") -> pd.DataFrame:
-    """거래량 상위."""
+def _rows_to_df(stocks: list) -> pd.DataFrame:
+    """API 종목 리스트 → 표준 컬럼(종목명·현재가·등락률·거래량·시가총액) DataFrame."""
+    rows = []
+    for s in stocks:
+        name = s.get("stockName", "")
+        if not name:
+            continue
+        rows.append({
+            "종목명":   name,
+            "현재가":   _to_int(s.get("closePriceRaw") or s.get("closePrice")),
+            "등락률":   _to_float(s.get("fluctuationsRatio")),
+            "거래량":   _to_int(s.get("accumulatedTradingVolumeRaw")
+                             or s.get("accumulatedTradingVolume")),
+            # marketValueRaw(원) → 억원 (기존 스크래핑과 동일한 단위)
+            "시가총액": _to_int(s.get("marketValueRaw")) / 1e8,
+        })
+    return pd.DataFrame(rows).reset_index(drop=True)
+
+
+def _api_stocks(sort: str, market: str, page: int = 1, page_size: int = 100) -> list:
+    """m.stock.naver.com/api/stocks/{sort}/{market} 한 페이지(최대 100개)."""
+    sosok = "KOSDAQ" if market.upper() == "KOSDAQ" else "KOSPI"
     r = requests.get(
-        "https://finance.naver.com/sise/sise_quant.naver",
+        f"{_MOBILE_API}/{sort}/{sosok}",
         headers=_HEADERS,
-        params={"sosok": "0" if market == "KOSPI" else "1"},
+        params={"page": page, "pageSize": page_size},
         timeout=15,
     )
-    html = r.content.decode("euc-kr", errors="replace")
-    tables = pd.read_html(StringIO(html), thousands=",")
-    df = None
-    for t in tables:
-        if t.shape[1] >= 5 and len(t) > 5:
-            df = t; break
-    if df is None: return pd.DataFrame()
+    r.raise_for_status()
+    return r.json().get("stocks", [])
 
-    df.columns = [str(c) for c in df.columns]
-    rename = {}
-    for c in df.columns:
-        if "종목" in c or "이름" in c: rename[c] = "종목명"
-        elif "현재" in c:              rename[c] = "현재가"
-        elif "등락률" in c:            rename[c] = "등락률"
-        elif "거래량" in c:            rename[c] = "거래량"
-        elif "시가총액" in c:          rename[c] = "시가총액"
-    df = df.rename(columns=rename).dropna(how="all")
-    df = df[df.get("종목명", pd.Series(dtype=str)).notna()]
-    for col in ["현재가", "등락률", "거래량", "시가총액"]:
-        if col in df.columns:
-            df[col] = pd.to_numeric(
-                df[col].astype(str).str.replace(",", "").str.replace("%", "").str.replace("+", ""),
-                errors="coerce"
-            )
-    return df.reset_index(drop=True)
+
+def _fetch_updown(market: str, rise: bool = True) -> pd.DataFrame:
+    """등락률 상위(rise=True) / 하위(rise=False) — 전용 API 직접 호출."""
+    try:
+        stocks = _api_stocks("up" if rise else "down", market, page_size=50)
+    except Exception:
+        return pd.DataFrame()
+    return _rows_to_df(stocks)
+
+
+def _fetch_volume(market: str, max_pages: int = 30) -> pd.DataFrame:
+    """거래량 상위 — 거래량 전용 API가 없어 전체 시장을 받아 거래량으로 정렬.
+
+    거래량 1위는 대개 저가 ETF·소형주라 시총순 상위만으로는 잡히지 않으므로
+    시가총액 API로 전 종목을 모은 뒤 거래량 기준 재정렬한다. (30분 캐시)
+    """
+    all_stocks: list = []
+    try:
+        for pg in range(1, max_pages + 1):
+            stocks = _api_stocks("marketValue", market, page=pg, page_size=100)
+            if not stocks:
+                break
+            all_stocks.extend(stocks)
+    except Exception:
+        if not all_stocks:
+            return pd.DataFrame()
+    all_stocks.sort(
+        key=lambda s: _to_int(s.get("accumulatedTradingVolumeRaw")), reverse=True
+    )
+    return _rows_to_df(all_stocks[:100])
 
 
 def fetch_rankings(market: str) -> dict[str, pd.DataFrame]:
     print("  등락률 상위 수집 중...", end="\r", flush=True)
-    rise = _scrape_rise_fall(market, rise=True)
+    rise = _fetch_updown(market, rise=True)
     print("  등락률 하위 수집 중...", end="\r", flush=True)
-    fall = _scrape_rise_fall(market, rise=False)
+    fall = _fetch_updown(market, rise=False)
     print("  거래량 상위 수집 중...", end="\r", flush=True)
-    vol  = _scrape_volume(market)
+    vol  = _fetch_volume(market)
     print(" " * 30, end="\r")
     return {"rise": rise, "fall": fall, "volume": vol}
 

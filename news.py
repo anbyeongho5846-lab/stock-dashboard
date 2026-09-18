@@ -1,18 +1,17 @@
 """
 종목 뉴스 수집 모듈
-1. 네이버 금융 종목별 뉴스 스크래핑 (링크 포함)
+1. 네이버 모바일 증권 종목별 뉴스 API (링크 포함)
 2. 네이버 뉴스 검색 API (Naver API 키 있을 때)
 3. 감성 분석 (긍정/부정 키워드 기반)
 """
 
 from __future__ import annotations
 
+import html
 import re
 from datetime import datetime
-from io import StringIO
 
 import requests
-from bs4 import BeautifulSoup
 
 _HEADERS = {
     "User-Agent": (
@@ -20,9 +19,30 @@ _HEADERS = {
         "AppleWebKit/537.36 (KHTML, like Gecko) "
         "Chrome/120.0.0.0 Safari/537.36"
     ),
-    "Referer": "https://finance.naver.com/",
+    "Referer": "https://m.stock.naver.com/",
     "Accept-Language": "ko-KR,ko;q=0.9",
 }
+
+# 네이버 모바일 증권 종목 뉴스 API
+# (2026-09 개편: finance.naver.com 종목뉴스가 stock.naver.com SPA로 이전되어
+#  HTML 스크래핑이 깨짐 → 아래 JSON API 사용)
+_STOCK_NEWS_API = "https://m.stock.naver.com/api/news/stock/{code}"
+
+_TAG_RE = re.compile(r"<[^>]+>")
+
+
+def _clean(t: str) -> str:
+    return html.unescape(_TAG_RE.sub("", t or "")).strip()
+
+
+def _fmt_datetime(s) -> str:
+    """네이버 datetime(YYYYMMDDHHMM) → 'YYYY.MM.DD HH:MM'."""
+    s = str(s)
+    if len(s) >= 12:
+        return f"{s[0:4]}.{s[4:6]}.{s[6:8]} {s[8:10]}:{s[10:12]}"
+    if len(s) >= 8:
+        return f"{s[0:4]}.{s[4:6]}.{s[6:8]}"
+    return s
 
 # ── 감성 분석 키워드 ───────────────────────────────────────────────────────────
 
@@ -61,65 +81,39 @@ def analyze_sentiment(title: str) -> tuple[str, int]:
 
 def fetch_naver_stock_news(ticker: str, max_items: int = 20) -> list[dict]:
     """
-    네이버 금융 종목별 뉴스 스크래핑.
-    https://finance.naver.com/item/news_news.naver?code=005930
+    네이버 모바일 증권 종목별 뉴스 API.
+    https://m.stock.naver.com/api/news/stock/005930
 
-    Returns list of dicts: {title, url, press, date, sentiment, sentiment_score}
+    응답은 [{total, items:[...]}, ...] (관련기사 묶음). 이를 평탄화한다.
+    Returns list of dicts: {title, url, press, date, description, sentiment, sentiment_score}
     """
-    results = []
-    base = "https://finance.naver.com"
+    results: list[dict] = []
+    try:
+        resp = requests.get(_STOCK_NEWS_API.format(code=ticker), headers=_HEADERS,
+                            params={"pageSize": max_items}, timeout=8)
+        resp.raise_for_status()
+        groups = resp.json()
+    except Exception:
+        return results
 
-    for page in range(1, 3):   # 최대 2페이지
-        url = (
-            f"{base}/item/news_news.naver"
-            f"?code={ticker}&page={page}&sm=title_entity_id.basic"
-        )
-        try:
-            resp = requests.get(url, headers=_HEADERS, timeout=8)
-            html = resp.content.decode("euc-kr", errors="replace")
-        except Exception:
-            break
-
-        soup = BeautifulSoup(html, "lxml")
-
-        # 뉴스 목록 테이블
-        table = soup.find("table", class_="type5")
-        if not table:
-            break
-
-        for tr in table.find_all("tr"):
-            td_title = tr.find("td", class_="title")
-            td_info  = tr.find("td", class_="info")
-            td_date  = tr.find("td", class_="date")
-
-            if not td_title:
+    seen_titles: set[str] = set()
+    for grp in (groups if isinstance(groups, list) else []):
+        for item in (grp.get("items", []) if isinstance(grp, dict) else []):
+            title = _clean(item.get("title") or item.get("titleFull") or "")
+            if not title or len(title) < 5 or title in seen_titles:
                 continue
-
-            a_tag = td_title.find("a")
-            if not a_tag:
-                continue
-
-            title = a_tag.get_text(strip=True)
-            href  = a_tag.get("href", "")
-            # 상대경로 → 절대경로
-            article_url = base + href if href.startswith("/") else href
-
-            press = td_info.get_text(strip=True) if td_info else ""
-            date  = td_date.get_text(strip=True) if td_date else ""
-
-            if not title or len(title) < 5:
-                continue
+            seen_titles.add(title)
 
             sentiment, score = analyze_sentiment(title)
             results.append({
                 "title":           title,
-                "url":             article_url,
-                "press":           press,
-                "date":            date,
+                "url":             item.get("mobileNewsUrl", ""),
+                "press":           item.get("officeName", ""),
+                "date":            _fmt_datetime(item.get("datetime", "")),
+                "description":     _clean(item.get("body", "")),
                 "sentiment":       sentiment,
                 "sentiment_score": score,
             })
-
             if len(results) >= max_items:
                 return results
 

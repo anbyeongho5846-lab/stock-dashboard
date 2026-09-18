@@ -3,46 +3,72 @@
 - Volume Profile: OHLCV에서 가격대별 거래량 분포 계산
 - 핵심 가격대(POC, 저항·지지) 추출
 - 매물대 돌파 신호 탐지
-- 외국인/기관 순매수 추이 (pykrx, 로컬 전용)
+- 외국인/기관 순매수 추이 (네이버 모바일 증권 API)
 """
 
 import numpy as np
 import pandas as pd
+import requests
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 
 
-# ── 투자자별 매매 동향 (pykrx) ─────────────────────────────────────────────────
+# ── 투자자별 매매 동향 (네이버 모바일 증권 API) ────────────────────────────────
+
+_HEADERS = {
+    "User-Agent": ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+                   "(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"),
+    "Referer": "https://m.stock.naver.com/",
+}
+_TREND_API = "https://m.stock.naver.com/api/stock/{code}/trend"
+
+
+def _num(v) -> float:
+    try:
+        return float(str(v).replace(",", "").replace("+", "").replace("%", ""))
+    except (ValueError, TypeError):
+        return 0.0
+
 
 def fetch_investor_flow(ticker: str, days: int = 30) -> pd.DataFrame:
     """
-    외국인 / 기관 / 개인 순매수 금액.
-    pykrx 사용 → Streamlit Cloud에서는 빈 DataFrame 반환.
+    외국인 / 기관 / 개인 순매수 '금액'(원).
 
-    Returns: index=date, columns 포함 [개인, 기관합계, 외국인합계]
+    (2026-09 개편: pykrx가 클라우드에서 차단되어 네이버 모바일 trend API로 교체.
+     trend는 순매수 '수량'만 주므로 금액 ≈ 순매수수량 × 종가로 근사한다.)
+
+    Returns: index=date, columns [개인, 기관합계, 외국인합계]
     """
-    from datetime import datetime, timedelta
-
-    end   = datetime.today().strftime("%Y%m%d")
-    start = (datetime.today() - timedelta(days=days + 20)).strftime("%Y%m%d")
-
     try:
-        from pykrx import stock as krx
-        df = krx.get_market_trading_value_by_date(start, end, ticker)
-        if df is None or df.empty:
-            return pd.DataFrame()
-        df.index = pd.to_datetime(df.index)
-        # 컬럼 정규화 (pykrx 버전별로 이름이 다를 수 있음)
-        rename = {}
-        for c in df.columns:
-            if "개인" in c:   rename[c] = "개인"
-            elif "기관" in c: rename[c] = "기관합계"
-            elif "외국인" in c: rename[c] = "외국인합계"
-        df = df.rename(columns=rename)
-        keep = [c for c in ["개인", "기관합계", "외국인합계"] if c in df.columns]
-        return df[keep].tail(days)
+        r = requests.get(_TREND_API.format(code=ticker), headers=_HEADERS,
+                         params={"pageSize": 60}, timeout=12)
+        r.raise_for_status()
+        data = r.json()
     except Exception:
         return pd.DataFrame()
+
+    if not isinstance(data, list) or not data:
+        return pd.DataFrame()
+
+    rows = []
+    for rec in data:
+        bd = rec.get("bizdate")
+        if not bd:
+            continue
+        close = _num(rec.get("closePrice"))
+        rows.append({
+            "date":      bd,
+            "개인":      _num(rec.get("individualPureBuyQuant")) * close,
+            "기관합계":  _num(rec.get("organPureBuyQuant"))      * close,
+            "외국인합계": _num(rec.get("foreignerPureBuyQuant"))  * close,
+        })
+    if not rows:
+        return pd.DataFrame()
+
+    df = pd.DataFrame(rows)
+    df.index = pd.to_datetime(df["date"], format="%Y%m%d", errors="coerce")
+    df = df[df.index.notna()].drop(columns=["date"]).sort_index()
+    return df.tail(days)
 
 
 # ── Volume Profile ────────────────────────────────────────────────────────────

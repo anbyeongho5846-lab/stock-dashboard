@@ -6,11 +6,13 @@ AI 종목 리포트 — Google Gemini API로 차트·지표·뉴스를 종합 �
 """
 
 import json
+import time
 
 import requests
 
-# 무료 티어 권장 모델(2026-10 기준). 더 저렴하게: "gemini-3.5-flash-lite"
-GEMINI_MODEL = "gemini-3.8-flash"
+# 무료 티어 모델(2026-10 기준). 3.6-flash는 안정적이고 빠름.
+# (최신 3.8-flash는 과부하(503)가 잦아 데모엔 3.6-flash 권장)
+GEMINI_MODEL = "gemini-3.6-flash"
 _ENDPOINT = "https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent"
 
 # 투자자문이 아님을 명시하는 면책 문구 (호출부에서 리포트와 함께 표시)
@@ -42,31 +44,56 @@ def generate_stock_report(
     data: dict,
     api_key: str,
     model: str = GEMINI_MODEL,
-    timeout: int = 20,
+    timeout: int = 30,
 ) -> str:
     """Gemini로 리포트 텍스트 생성. 실패 시 사용자용 안내 문자열 반환."""
     if not api_key:
         return ""
     body = {
         "contents": [{"parts": [{"text": _build_prompt(ticker, name, data)}]}],
-        "generationConfig": {"temperature": 0.4, "maxOutputTokens": 1024},
+        "generationConfig": {
+            "temperature": 0.4,
+            "maxOutputTokens": 1024,
+            # thinking 모델의 사고 토큰이 답변 예산·시간을 잠식하지 않도록 끈다
+            # (요약 작업엔 불필요 → 더 빠르고 응답이 잘림 없이 나옴)
+            "thinkingConfig": {"thinkingBudget": 0},
+        },
     }
     headers = {"x-goog-api-key": api_key, "Content-Type": "application/json"}
-    try:
-        r = requests.post(
-            _ENDPOINT.format(model=model), headers=headers, json=body, timeout=timeout
-        )
-        r.raise_for_status()
-        j = r.json()
-    except requests.exceptions.HTTPError:
-        code = getattr(r, "status_code", "?")
+    url = _ENDPOINT.format(model=model)
+
+    # 과부하(503)·타임아웃 시 1회 재시도
+    resp = None
+    for attempt in range(2):
+        try:
+            resp = requests.post(url, headers=headers, json=body, timeout=timeout)
+        except requests.exceptions.Timeout:
+            if attempt == 0:
+                continue
+            return "⚠️ 응답이 지연됩니다. 잠시 후 다시 시도해 주세요."
+        except Exception as e:
+            return f"⚠️ 리포트를 생성하지 못했습니다: {type(e).__name__}"
+        if resp.status_code == 503 and attempt == 0:
+            time.sleep(1.5)
+            continue
+        break
+
+    if resp is None:
+        return "⚠️ 응답을 받지 못했습니다. 잠시 후 다시 시도해 주세요."
+    if resp.status_code != 200:
+        code = resp.status_code
         if code in (401, 403):
             return "⚠️ Gemini API 키가 올바르지 않거나 권한이 없습니다. 키를 확인해 주세요."
         if code == 429:
             return "⚠️ 요청이 많아 잠시 후 다시 시도해 주세요. (무료 한도 초과)"
+        if code == 503:
+            return "⚠️ AI 모델이 일시적으로 혼잡합니다. 잠시 후 다시 눌러 주세요."
         return f"⚠️ 리포트 생성 실패 (HTTP {code})."
-    except Exception as e:
-        return f"⚠️ 리포트를 생성하지 못했습니다: {type(e).__name__}"
+
+    try:
+        j = resp.json()
+    except Exception:
+        return "⚠️ 응답을 해석하지 못했습니다."
 
     cands = j.get("candidates", [])
     if not cands:

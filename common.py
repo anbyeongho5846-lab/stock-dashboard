@@ -5,6 +5,7 @@
 """
 
 import json
+import time
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -279,24 +280,76 @@ def _color_pnl(val: str) -> str:
     return "color: #94a3b8"
 
 
+# ── 데이터 소스 상태 & 장애 대비 폴백 ──────────────────────────────────────────
+
+_LAST_GOOD: dict = {}                         # key → (data, epoch)
+_HEALTH = {"last_ok": None, "stale": False}   # 사이드바 배지용 전역 상태
+
+
+def _is_empty(data) -> bool:
+    if data is None:
+        return True
+    if hasattr(data, "empty"):                # DataFrame
+        return bool(data.empty)
+    if isinstance(data, dict):
+        if not data:
+            return True
+        vals = list(data.values())
+        if vals and all(getattr(v, "empty", False) for v in vals):
+            return True
+        return False
+    if isinstance(data, (list, tuple)):
+        return len(data) == 0
+    return not bool(data)
+
+
+def _with_fallback(key: str, data):
+    """성공(비어있지 않음)이면 저장 후 반환, 실패면 직전 성공 데이터로 폴백.
+    소스 장애 시 빈 화면 대신 마지막 데이터를 보여주고, 상태를 _HEALTH에 기록."""
+    if not _is_empty(data):
+        _LAST_GOOD[key] = (data, time.time())
+        _HEALTH["last_ok"] = time.time()
+        _HEALTH["stale"] = False
+        return data
+    if key in _LAST_GOOD:                      # 실패 → 직전 성공 데이터
+        _HEALTH["stale"] = True
+        return _LAST_GOOD[key][0]
+    return data
+
+
+def data_status_html() -> str:
+    """사이드바용 데이터 소스 상태 배지."""
+    last = _HEALTH.get("last_ok")
+    if last is None:
+        return '<span style="color:#9aa7b8;">⚪ 데이터 대기 중</span>'
+    ok = datetime.fromtimestamp(last, KST).strftime("%H:%M")
+    if _HEALTH.get("stale"):
+        return (f'<span style="color:#fbbf24; font-weight:600;">🟡 데이터 지연</span><br>'
+                f'<span style="color:#6b7688; font-size:0.88rem;">최근 성공 {ok} · 직전 데이터 표시</span>')
+    return (f'<span style="color:#34d399; font-weight:600;">🟢 데이터 정상</span><br>'
+            f'<span style="color:#6b7688; font-size:0.88rem;">최근 갱신 {ok}</span>')
+
+
 # ── 공통 캐싱 함수 ────────────────────────────────────────────────────────────
 
 @st.cache_data(ttl=1800)   # 30분 캐시 — 네이버 요청 빈도 최소화
 def cached_rankings(market: str):
     from ranking import fetch_rankings
     try:
-        return fetch_rankings(market)
+        data = fetch_rankings(market)
     except Exception:
-        return {}
+        data = {}
+    return _with_fallback(f"rankings:{market}", data)
 
 
 @st.cache_data(ttl=1800)   # 30분 캐시
 def cached_sector(type_: str):
     from sector import fetch_sector
     try:
-        return fetch_sector(type_)
+        data = fetch_sector(type_)
     except Exception:
-        return pd.DataFrame()
+        data = pd.DataFrame()
+    return _with_fallback(f"sector:{type_}", data)
 
 
 @st.cache_data(ttl=3600)

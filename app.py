@@ -26,7 +26,7 @@ st.set_page_config(
 )
 
 import common
-from common import inject_css, market_status_html, now_kst
+from common import inject_css, market_status_html, now_kst, data_status_html
 
 inject_css()
 
@@ -86,14 +86,17 @@ with st.sidebar:
     st.markdown(market_status_html(), unsafe_allow_html=True)
 
     st.markdown("---")
+    st.markdown("**데이터 상태**")
+    st.markdown(data_status_html(), unsafe_allow_html=True)
+
+    st.markdown("---")
     st.markdown("""
     <div style="font-size:0.72rem; color:#4a5568; line-height:1.7;">
         📊 데이터 출처<br>
         · 네이버증권<br>
         · yfinance<br>
         · pykrx (한국거래소)<br>
-        · Open DART (금융감독원)<br>
-        · 네이버 데이터랩
+        · Open DART (금융감독원)
     </div>
     """, unsafe_allow_html=True)
     st.markdown(f"""

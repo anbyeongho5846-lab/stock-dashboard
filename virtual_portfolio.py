@@ -58,51 +58,66 @@ def _get_supabase():
         return None
 
 
-def load_portfolio() -> dict:
-    """포트폴리오 로드 — Supabase 우선, 없으면 로컬 파일."""
+def sanitize_pid(code: str) -> str:
+    """포트폴리오 코드 정규화 (영문·숫자·_-만, 소문자, 40자). 비면 'default'."""
+    safe = "".join(c for c in str(code).strip().lower() if c.isalnum() or c in "_-")
+    return safe[:40] or "default"
+
+
+def _local_file(pid: str) -> Path:
+    if pid == "default":
+        return PORTFOLIO_FILE
+    return PORTFOLIO_FILE.parent / f"portfolio_{pid}.json"
+
+
+def load_portfolio(pid: str = "default") -> dict:
+    """포트폴리오 로드 — Supabase 우선, 없으면 로컬 파일. pid별로 분리."""
+    pid = sanitize_pid(pid)
     sb = _get_supabase()
     if sb:
         try:
-            res = sb.table("portfolio").select("data").eq("id", "default").execute()
+            res = sb.table("portfolio").select("data").eq("id", pid).execute()
             if res.data:
                 return res.data[0]["data"]
             # DB에 행이 없으면 기본값 생성
             p = _default(10_000_000)
-            sb.table("portfolio").insert({"id": "default", "data": p}).execute()
+            sb.table("portfolio").insert({"id": pid, "data": p}).execute()
             return p
         except Exception:
             pass
 
     # 로컬 파일 (개발 환경 fallback)
-    if PORTFOLIO_FILE.exists():
+    f = _local_file(pid)
+    if f.exists():
         try:
-            return json.loads(PORTFOLIO_FILE.read_text(encoding="utf-8"))
+            return json.loads(f.read_text(encoding="utf-8"))
         except Exception:
             pass
     p = _default(10_000_000)
-    save_portfolio(p)
+    save_portfolio(p, pid)
     return p
 
 
-def save_portfolio(p: dict) -> None:
-    """포트폴리오 저장 — Supabase 우선, 없으면 로컬 파일."""
+def save_portfolio(p: dict, pid: str = "default") -> None:
+    """포트폴리오 저장 — Supabase 우선, 없으면 로컬 파일. pid별로 분리."""
+    pid = sanitize_pid(pid)
     sb = _get_supabase()
     if sb:
         try:
-            sb.table("portfolio").upsert({"id": "default", "data": p}).execute()
+            sb.table("portfolio").upsert({"id": pid, "data": p}).execute()
             return
         except Exception:
             pass
 
     # 로컬 파일 (개발 환경 fallback)
-    PORTFOLIO_FILE.write_text(
+    _local_file(pid).write_text(
         json.dumps(p, ensure_ascii=False, indent=2), encoding="utf-8"
     )
 
 
-def reset_portfolio(capital: float) -> dict:
+def reset_portfolio(capital: float, pid: str = "default") -> dict:
     p = _default(capital)
-    save_portfolio(p)
+    save_portfolio(p, pid)
     return p
 
 

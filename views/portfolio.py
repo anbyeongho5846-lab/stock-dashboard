@@ -18,7 +18,7 @@ from common import (
 
 def show_virtual_portfolio():
     from virtual_portfolio import (
-        load_portfolio, save_portfolio, reset_portfolio,
+        load_portfolio, save_portfolio, reset_portfolio, sanitize_pid,
         buy as vp_buy, sell as vp_sell,
         evaluate, plot_portfolio, get_current_price,
         search_kr_stocks, search_us_stocks, rebuild_kr_ticker_db,
@@ -28,8 +28,29 @@ def show_virtual_portfolio():
     page_header("💰", "가상 투자",
                 "가상 자금으로 국내·미국 주식을 매수·매도하고 포트폴리오 성과를 추적합니다.")
 
+    # ── 포트폴리오 코드 (사용자별 분리) ─────────────────────────────────────────
+    cc1, cc2 = st.columns([3, 5])
+    with cc1:
+        code_in = st.text_input(
+            "내 포트폴리오 코드",
+            value=st.session_state.get("vp_code", "default"),
+            key="vp_code_input",
+            help="나만의 코드를 입력하면 개인 포트폴리오로 분리됩니다 (예: hong2026). "
+                 "비우면 공용(default) 포트폴리오를 사용합니다.",
+        )
+    pid = sanitize_pid(code_in)
+    st.session_state["vp_code"] = pid
+    with cc2:
+        st.markdown(
+            f"<div style='margin-top:30px; font-size:0.82rem; color:#94a3b8;'>"
+            f"현재 포트폴리오: <b style='color:#60a5fa;'>{pid}</b>  "
+            f"<span style='color:#6b7688;'>· 코드는 암호가 아니라 '칸막이'입니다. "
+            f"같은 코드를 아는 사람은 함께 보게 됩니다.</span></div>",
+            unsafe_allow_html=True,
+        )
+
     # ── 포트폴리오 로드 & 평가 ─────────────────────────────────────────────────
-    p  = load_portfolio()
+    p  = load_portfolio(pid)
     ev = evaluate(p)
 
     # ── 상단 요약 메트릭 ────────────────────────────────────────────────────────
@@ -199,7 +220,7 @@ def show_virtual_portfolio():
                 int(buy_qty), float(buy_price),
             )
             if ok:
-                save_portfolio(p)
+                save_portfolio(p, pid)
                 st.success(msg)
                 st.rerun()
             else:
@@ -279,7 +300,7 @@ def show_virtual_portfolio():
                     int(sell_qty), float(sell_price),
                 )
                 if ok:
-                    save_portfolio(p)
+                    save_portfolio(p, pid)
                     st.success(msg)
                     st.rerun()
                 else:
@@ -365,7 +386,7 @@ def show_virtual_portfolio():
                 )
                 if st.button("✅ 평균단가 적용", key="vp_avg_apply"):
                     p["holdings"][avg_key]["avg_price"] = round(float(new_avg), 4)
-                    save_portfolio(p)
+                    save_portfolio(p, pid)
                     st.success(
                         f"{avg_h['name']} 평균단가를 {new_avg:,.2f}원으로 수정했습니다."
                     )
@@ -408,6 +429,6 @@ def show_virtual_portfolio():
             confirm_reset = st.checkbox("정말 초기화하겠습니다", key="vp_reset_confirm")
             if st.button("🔄 포트폴리오 초기화", key="vp_reset_exec",
                          disabled=not confirm_reset):
-                reset_portfolio(float(new_capital))
+                reset_portfolio(float(new_capital), pid)
                 st.success(f"포트폴리오가 {new_capital:,.0f}원으로 초기화되었습니다.")
                 st.rerun()

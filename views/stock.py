@@ -71,7 +71,107 @@ def show_analyzer():
         disp["거래량"] = disp["거래량"].apply(fmt_volume)
         st.dataframe(disp, width="stretch")
 
+    # ── AI 종합 리포트 ─────────────────────────────────────────────────────────
+    st.markdown("---")
+    chip("🤖 AI 종합 리포트")
+    _render_ai_report(ticker.strip().upper(), is_kr, int(days))
+
     # ── 뉴스 피드 ──────────────────────────────────────────────────────────────
     st.markdown("---")
     chip("📰 관련 뉴스 & 감성 분석")
     _render_news(ticker.strip().upper(), corp_name="", is_kr=is_kr)
+
+
+# ── AI 리포트 ──────────────────────────────────────────────────────────────────
+
+@st.cache_data(ttl=21600, show_spinner=False)   # 종목별 6시간 캐시 (비용 최소화)
+def cached_ai_report(ticker: str, is_kr: bool, days: int) -> str:
+    """차트 지표 + 뉴스 감성을 모아 Gemini로 리포트 생성. 키 없으면 빈 문자열."""
+    try:
+        api_key = st.secrets["gemini"]["api_key"]
+    except Exception:
+        return ""
+    if not api_key:
+        return ""
+
+    df = cached_stock(ticker, is_kr, days)
+    if df.empty:
+        return ""
+    last = df.iloc[-1]
+    prev = df.iloc[-2] if len(df) > 1 else last
+
+    def _num(key):
+        v = last.get(key)
+        return round(float(v), 2) if v is not None and pd.notna(v) else None
+
+    change = (round((last["Close"] - prev["Close"]) / prev["Close"] * 100, 2)
+              if prev["Close"] else 0.0)
+
+    data = {
+        "현재가": round(float(last["Close"]), 2),
+        "전일대비_%": change,
+        "RSI14": _num("RSI"),
+        "MA5": _num("MA5"), "MA20": _num("MA20"), "MA60": _num("MA60"),
+        "MACD": _num("MACD"),
+        "조회_거래일수": int(len(df)),
+    }
+
+    # 뉴스 감성 (있으면 추가)
+    try:
+        _items, _src, summ = cached_news(ticker, "", is_kr)
+        if summ:
+            data["뉴스감성"] = {
+                "긍정": summ.get("positive"), "부정": summ.get("negative"),
+                "중립": summ.get("neutral"), "종합": summ.get("overall"),
+            }
+    except Exception:
+        pass
+
+    # 국내 종목명 (kr_tickers에서 조회)
+    name = ticker
+    if is_kr:
+        try:
+            from common import kr_stock_labels
+            for lab in kr_stock_labels():
+                if lab.endswith(f"({ticker})"):
+                    name = lab.rsplit("(", 1)[0].strip()
+                    break
+        except Exception:
+            pass
+
+    from ai_report import generate_stock_report
+    return generate_stock_report(ticker, name, data, api_key)
+
+
+def _render_ai_report(ticker: str, is_kr: bool, days: int) -> None:
+    from ai_report import DISCLAIMER
+
+    try:
+        has_key = bool(st.secrets["gemini"]["api_key"])
+    except Exception:
+        has_key = False
+
+    if not has_key:
+        st.info(
+            "💡 **AI 리포트는 선택 기능입니다.** Gemini API 키를 설정하면 차트·지표·뉴스를 "
+            "종합한 요약 리포트를 생성합니다.  \n"
+            "`.streamlit/secrets.toml`(로컬)과 Streamlit Cloud의 *Settings → Secrets* 에 "
+            "아래를 추가하세요:\n"
+            "```toml\n[gemini]\napi_key = \"발급받은_키\"\n```"
+        )
+        return
+
+    if st.button("🤖 AI 리포트 생성", key="ai_report_btn"):
+        st.session_state["ai_report_for"] = ticker
+
+    if st.session_state.get("ai_report_for") == ticker:
+        with st.spinner("AI가 지표와 뉴스를 분석하고 있습니다..."):
+            report = cached_ai_report(ticker, is_kr, days)
+        if report:
+            with st.container(border=True):
+                st.markdown(report)
+            st.caption("ℹ️ " + DISCLAIMER)
+        else:
+            st.warning("리포트를 생성하지 못했습니다. 종목 데이터 또는 API 키를 확인하세요.")
+    else:
+        st.caption("버튼을 누르면 현재 종목의 AI 리포트를 생성합니다. (종목별 6시간 캐시)")

@@ -20,6 +20,14 @@ def show_analyzer():
     page_header("📈", "종목 분석",
                 "캔들차트와 이동평균선(MA5·20·60·120), RSI, MACD, 볼린저밴드, 거래량을 한눈에 확인합니다.")
 
+    with st.expander("💡 이 화면 보는 법 (지표 설명)", expanded=False):
+        st.markdown(
+            "- **이동평균선(MA)**: 최근 N일 평균 가격. 단기선(MA5)이 장기선(MA20·60) 위에 있으면 상승 흐름(정배열)입니다.\n"
+            "- **RSI**: 0~100 수치. 70 이상이면 과열(과매수), 30 이하면 침체(과매도) 신호로 봅니다.\n"
+            "- **MACD**: 양수(+)면 상승 탄력, 음수(−)면 하락 탄력을 뜻합니다.\n"
+            "- 아래 **🤖 AI 리포트**를 누르면 이 지표들과 뉴스를 종합해 쉽게 요약해 줍니다."
+        )
+
     col1, col2 = st.columns([5, 5])
     with col1:
         ticker, is_kr = stock_picker("anal", default_code="005930")

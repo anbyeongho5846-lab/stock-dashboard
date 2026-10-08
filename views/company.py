@@ -20,6 +20,13 @@ def show_fundamental():
     page_header("🏢", "기업 기본 분석",
                 "재무제표(매출·영업이익·순이익·EPS), 주요 밸류에이션 지표(PER·PBR·ROE)를 조회합니다.")
 
+    with st.expander("💡 밸류에이션 지표 쉽게 이해하기", expanded=False):
+        st.markdown(
+            "- **PER(주가수익비율)**: 이익 대비 주가가 비싼지. 낮을수록 저평가 경향입니다(업종마다 기준이 다름).\n"
+            "- **PBR(주가순자산비율)**: 자산 대비 주가. 1 미만이면 장부가치보다 싸게 거래된다는 뜻입니다.\n"
+            "- **ROE(자기자본이익률)**: 자기 돈으로 얼마나 버는지. 높을수록 효율이 좋은 기업입니다."
+        )
+
     c1, c2 = st.columns([5, 3])
     with c1:
         ticker, is_kr = stock_picker("fund", default_code="005930")

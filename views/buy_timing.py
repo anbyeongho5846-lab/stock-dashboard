@@ -27,6 +27,13 @@ def show_signal_monitor():
     page_header("📌", "매수 타이밍 스캐너",
                 "관심 종목의 RSI·MACD·이동평균을 매일 자동 분석해 최적 진입 타이밍을 알려줍니다.")
 
+    with st.expander("💡 이 화면 사용법", expanded=False):
+        st.markdown(
+            "- **관심 종목을 등록**하면 RSI·MACD·이동평균을 종합해 **매수 신호**가 뜬 종목을 골라줍니다.\n"
+            "- '강매수·매수'로 표시된 종목이 현재 진입 조건을 만족한 종목입니다.\n"
+            "- 아래 **매수 계획 계산기**로 예산 대비 몇 주를 살 수 있는지, 손절가는 얼마인지 계산할 수 있습니다."
+        )
+
     # ── 감시 목록 관리 ────────────────────────────────────────────────────────
     if "signal_watchlist" not in st.session_state:
         default = load_watchlist(DEFAULT_WATCHLIST) if DEFAULT_WATCHLIST.exists() else []

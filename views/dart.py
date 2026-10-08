@@ -110,6 +110,13 @@ def show_dart_screener():
         "Open DART API 기반 EPS·BPS 수집 → 역사적 PER/PBR 밴드 분석 → 저평가 종목 스크리닝",
     )
 
+    with st.expander("💡 이 화면이 하는 일", expanded=False):
+        st.markdown(
+            "- **금융감독원 DART 재무제표**로 상장사들의 주당순이익(EPS)·주당순자산(BPS)을 모읍니다.\n"
+            "- 지금 주가가 그 기업의 **역사적 평균보다 싼지(저평가)**를 PER/PBR 밴드와 비교해 점수로 매깁니다.\n"
+            "- **개별 종목** 탭은 한 종목을 깊게, **저평가 스크리너** 탭은 여러 종목을 한 번에 걸러줍니다."
+        )
+
     api_key = _get_dart_api_key()
     if not api_key:
         st.error(

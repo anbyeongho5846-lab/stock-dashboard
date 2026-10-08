@@ -1,5 +1,6 @@
 """페이지: 가상 투자 — 매수/매도/거래내역 (Supabase 저장)."""
 
+import json
 from datetime import datetime, timedelta
 
 import pandas as pd
@@ -36,6 +37,59 @@ def _cached_kospi_index(start: str, end: str):
         return dates, idx
     except Exception:
         return None
+
+
+def _coaching_system(data_json: str) -> str:
+    return (
+        "당신은 개인 투자자를 돕는 포트폴리오 코치입니다. 아래 '포트폴리오'를 보고 "
+        "다음을 신중하고 교육적으로 조언하세요:\n"
+        "① 분산/집중도(한 종목이나 한 시장에 쏠렸는지) ② 현금 비중의 적정성 "
+        "③ 수익/손실 균형 ④ 개선을 위한 구체적 방향(비중 조정 등).\n"
+        "규칙: 데이터에 없는 종목·수치는 지어내지 말 것. '반드시 매수/매도'·수익 보장 같은 단정 금지, "
+        "'~해 볼 수 있습니다'·'유의가 필요합니다' 같은 신중한 표현. 5~7문장. 이것은 투자 자문이 아님.\n\n"
+        f"[포트폴리오]\n{data_json}"
+    )
+
+
+def _portfolio_coaching_data(ev: dict, stt: dict) -> dict:
+    total = ev["total_value"] or 1
+    holdings = []
+    for r in ev["rows"]:
+        holdings.append({
+            "종목명": r["종목명"], "시장": r["시장"],
+            "평가금액": round(r["평가금액"]),
+            "비중_%": round(r["평가금액"] / total * 100, 1),
+            "수익률_%": round(r["수익률"], 2),
+        })
+    return {
+        "총자산": round(ev["total_value"]),
+        "현금비중_%": round(ev["cash"] / total * 100, 1),
+        "주식비중_%": round(ev["holdings_value"] / total * 100, 1),
+        "총수익률_%": round(ev["total_pnl_pct"], 2),
+        "보유종목수": len(holdings),
+        "국내종목수": sum(1 for h in holdings if h["시장"] == "KR"),
+        "미국종목수": sum(1 for h in holdings if h["시장"] == "US"),
+        "실현손익": round(stt["realized"]),
+        "승률_%": round(stt["win_rate"]),
+        "보유종목": holdings,
+    }
+
+
+@st.cache_data(ttl=3600, show_spinner=False)
+def _cached_coaching(data_json: str) -> str:
+    """포트폴리오 상태(data_json)별 AI 코칭. 키 없으면 빈 문자열."""
+    try:
+        api_key = st.secrets["gemini"]["api_key"]
+    except Exception:
+        return ""
+    if not api_key:
+        return ""
+    from ai_report import ask_gemini
+    return ask_gemini(
+        _coaching_system(data_json),
+        [{"role": "user", "text": "위 포트폴리오를 분석하고 코칭해 주세요."}],
+        api_key,
+    )
 
 
 def show_virtual_portfolio():
@@ -127,6 +181,32 @@ def show_virtual_portfolio():
         st.plotly_chart(plot_value_history(p, bench, show=False), width="stretch")
     with pc2:
         st.plotly_chart(plot_realized_pnl(p, show=False), width="stretch")
+
+    # ── AI 포트폴리오 코칭 ──────────────────────────────────────────────────────
+    st.markdown("---")
+    chip("🤖 AI 포트폴리오 코칭")
+    try:
+        _has_gem = bool(st.secrets["gemini"]["api_key"])
+    except Exception:
+        _has_gem = False
+    if not _has_gem:
+        st.caption("💡 Gemini API 키를 설정하면 AI가 분산·비중·리스크를 진단해 줍니다.")
+    elif not ev["rows"]:
+        st.caption("보유 종목이 있으면 AI 코칭을 받을 수 있습니다. 먼저 종목을 매수해 보세요.")
+    else:
+        if st.button("🤖 AI 코칭 받기", key="vp_coach_btn"):
+            st.session_state["vp_coach_go"] = True
+        if st.session_state.get("vp_coach_go"):
+            data = _portfolio_coaching_data(ev, performance_stats(p, ev))
+            with st.spinner("포트폴리오를 분석하는 중..."):
+                coaching = _cached_coaching(json.dumps(data, ensure_ascii=False, sort_keys=True))
+            if coaching:
+                with st.container(border=True):
+                    st.markdown(coaching)
+                from ai_report import DISCLAIMER
+                st.caption("ℹ️ " + DISCLAIMER)
+            else:
+                st.warning("코칭을 생성하지 못했습니다. 잠시 후 다시 시도하세요.")
 
     # ── 보유 종목 테이블 ────────────────────────────────────────────────────────
     if ev["rows"]:

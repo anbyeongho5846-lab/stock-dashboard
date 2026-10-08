@@ -78,20 +78,26 @@ def _div_earn(ticker: str, is_kr: bool):
                             price = float(df["Close"].iloc[-1])
                     except Exception:
                         pass
-                # info에 배당수익률이 없고 배당이력+가격이 있으면 '완전한 최근 연도' 배당/가격으로 근사
-                dy = info.get("dividendYield")
-                if dy is None and annual and price:
+                # info(quoteSummary)가 막혀도 '완전한 최근 연도' 배당 이력으로 보완
+                base_div = None
+                if annual:
                     import datetime as _dt
                     cur_y = _dt.date.today().year
                     full_years = [yy for yy in sorted(annual) if yy < cur_y]
                     base_y = full_years[-1] if full_years else max(annual)
-                    last_div = annual.get(base_y, 0)
-                    if last_div:
-                        dy = round(last_div / price * 100, 2)
+                    base_div = annual.get(base_y) or None
+
+                dy = info.get("dividendYield")
+                if dy is None and base_div and price:
+                    dy = round(base_div / price * 100, 2)
+
+                rate = info.get("dividendRate")
+                if rate is None and base_div:
+                    rate = round(base_div, 2)
 
                 return {
                     "symbol": sym, "price": price,
-                    "yield": dy, "rate": info.get("dividendRate"),
+                    "yield": dy, "rate": rate,
                     "payout": info.get("payoutRatio"),
                     "five": info.get("fiveYearAvgDividendYield"),
                     "annual": dict(sorted(annual.items())),

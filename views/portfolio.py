@@ -16,9 +16,32 @@ from common import (
 )
 
 
+@st.cache_data(ttl=3600, show_spinner=False)
+def _cached_kospi_index(start: str, end: str):
+    """KOSPI 지수(^KS11) 종가를 (dates, 시작=100 지수)로 반환. 실패 시 None."""
+    try:
+        import yfinance as yf
+        df = yf.download("^KS11", start=start, end=end, progress=False, auto_adjust=True)
+        if df is None or df.empty:
+            return None
+        close = df["Close"]
+        if hasattr(close, "columns"):      # MultiIndex 컬럼 대응
+            close = close.iloc[:, 0]
+        close = close.dropna()
+        if close.empty:
+            return None
+        base = float(close.iloc[0]) or 1
+        dates = [d.strftime("%Y-%m-%d") for d in close.index]
+        idx = [round(float(v) / base * 100, 2) for v in close.values]
+        return dates, idx
+    except Exception:
+        return None
+
+
 def show_virtual_portfolio():
     from virtual_portfolio import (
         load_portfolio, save_portfolio, reset_portfolio, sanitize_pid,
+        record_snapshot, performance_stats, plot_realized_pnl, plot_value_history,
         buy as vp_buy, sell as vp_sell,
         evaluate, plot_portfolio, get_current_price,
         search_kr_stocks, search_us_stocks, rebuild_kr_ticker_db,
@@ -60,6 +83,10 @@ def show_virtual_portfolio():
     p  = load_portfolio(pid)
     ev = evaluate(p)
 
+    # 오늘자 자산 스냅샷 기록 (하루 1회) → 성과 추이 그래프용
+    if record_snapshot(p, ev["total_value"]):
+        save_portfolio(p, pid)
+
     # ── 상단 요약 메트릭 ────────────────────────────────────────────────────────
     chip("포트폴리오 요약")
     c1, c2, c3, c4, c5 = st.columns(5)
@@ -78,6 +105,28 @@ def show_virtual_portfolio():
     # ── 차트 (자산 구성 파이 + 종목별 수익률 바) ────────────────────────────────
     fig_pf = plot_portfolio(ev, show=False)
     st.plotly_chart(fig_pf, width="stretch")
+
+    # ── 성과 분석 ──────────────────────────────────────────────────────────────
+    st.markdown("---")
+    chip("📈 성과 분석")
+    stt = performance_stats(p, ev)
+    s1, s2, s3, s4 = st.columns(4)
+    s1.metric("💰 실현 손익",   f"{stt['realized']:+,.0f}원")
+    s2.metric("📦 미실현 손익", f"{stt['unrealized']:+,.0f}원")
+    s3.metric("🎯 승률", f"{stt['win_rate']:.0f}%",
+              f"{stt['wins']}승 {stt['losses']}패" if stt["n_sell"] else None)
+    s4.metric("🔁 거래 수", f"매수 {stt['n_buy']} · 매도 {stt['n_sell']}")
+
+    pc1, pc2 = st.columns(2)
+    with pc1:
+        hist = p.get("history", [])
+        bench = None
+        if len(hist) >= 2:
+            end = (now_kst() + timedelta(days=1)).strftime("%Y-%m-%d")
+            bench = _cached_kospi_index(hist[0]["date"], end)
+        st.plotly_chart(plot_value_history(p, bench, show=False), width="stretch")
+    with pc2:
+        st.plotly_chart(plot_realized_pnl(p, show=False), width="stretch")
 
     # ── 보유 종목 테이블 ────────────────────────────────────────────────────────
     if ev["rows"]:

@@ -308,6 +308,115 @@ def evaluate(p: dict, price_override: dict | None = None) -> dict:
     }
 
 
+# ── 성과 분석 ──────────────────────────────────────────────────────────────────
+
+def record_snapshot(p: dict, total_value: float) -> bool:
+    """하루 1개 자산 스냅샷 기록. 새 날짜를 추가했으면 True(저장 필요)."""
+    hist = p.setdefault("history", [])
+    today = datetime.now().strftime("%Y-%m-%d")
+    if hist and hist[-1].get("date") == today:
+        return False
+    hist.append({"date": today, "value": round(float(total_value), 2)})
+    if len(hist) > 400:
+        del hist[:-400]
+    return True
+
+
+def performance_stats(p: dict, ev: dict) -> dict:
+    """거래/보유 기반 성과 통계."""
+    txs = p.get("transactions", [])
+    sells = [t for t in txs if t.get("action") == "SELL" and t.get("pnl") is not None]
+    realized = sum(t["pnl"] for t in sells)
+    wins = sum(1 for t in sells if t["pnl"] > 0)
+    n_sell = len(sells)
+    unrealized = sum(r["손익"] for r in ev.get("rows", []))
+    return {
+        "realized":   realized,
+        "unrealized": unrealized,
+        "win_rate":   (wins / n_sell * 100) if n_sell else 0.0,
+        "n_sell":     n_sell,
+        "n_buy":      sum(1 for t in txs if t.get("action") == "BUY"),
+        "wins":       wins,
+        "losses":     n_sell - wins,
+        "best":       max((t["pnl"] for t in sells), default=0.0),
+        "worst":      min((t["pnl"] for t in sells), default=0.0),
+    }
+
+
+def plot_realized_pnl(p: dict, show: bool = True) -> go.Figure:
+    """매도 거래 기준 누적 실현 손익."""
+    sells = sorted(
+        [t for t in p.get("transactions", [])
+         if t.get("action") == "SELL" and t.get("pnl") is not None],
+        key=lambda t: t["date"],
+    )
+    fig = go.Figure()
+    if not sells:
+        fig.add_annotation(text="실현 손익 내역이 없습니다 (매도하면 표시됩니다)",
+                           showarrow=False, font=dict(color="#94a3b8", size=14))
+        fig.update_layout(height=300, template="plotly_dark", margin=dict(t=40, b=20))
+        if show:
+            fig.show()
+        return fig
+    dates, cum, s = [], [], 0.0
+    for t in sells:
+        s += t["pnl"]
+        dates.append(t["date"][:10]); cum.append(round(s))
+    fig.add_trace(go.Scatter(
+        x=list(range(len(cum))), y=cum, mode="lines+markers",
+        line=dict(color="#60a5fa", width=2), marker=dict(size=7), text=dates,
+        hovertemplate="%{text}<br>누적 실현손익: %{y:,.0f}원<extra></extra>",
+    ))
+    fig.add_hline(y=0, line_dash="dash", line_color="rgba(255,255,255,0.25)")
+    fig.update_layout(
+        height=320, template="plotly_dark",
+        title=dict(text="누적 실현 손익", font=dict(size=15)),
+        xaxis=dict(title="매도 순서", tickmode="array",
+                   tickvals=list(range(len(dates))), ticktext=dates),
+        yaxis_title="누적 손익(원)", margin=dict(t=50, b=40),
+    )
+    if show:
+        fig.show()
+    return fig
+
+
+def plot_value_history(p: dict, benchmark=None, show: bool = True) -> go.Figure:
+    """자산 추이(시작=100) vs KOSPI. benchmark=(dates, idx) 또는 None."""
+    hist = p.get("history", [])
+    fig = go.Figure()
+    if len(hist) < 2:
+        fig.add_annotation(
+            text="자산 추이는 매일 접속할 때마다 기록되어 쌓입니다.<br>"
+                 "(2일 이상 기록되면 그래프가 표시됩니다)",
+            showarrow=False, font=dict(color="#94a3b8", size=14),
+        )
+        fig.update_layout(height=300, template="plotly_dark", margin=dict(t=40, b=20))
+        if show:
+            fig.show()
+        return fig
+    dates = [h["date"] for h in hist]
+    base = hist[0]["value"] or 1
+    idx = [round(h["value"] / base * 100, 2) for h in hist]
+    fig.add_trace(go.Scatter(x=dates, y=idx, mode="lines+markers",
+                             line=dict(color="#34d399", width=2.5), name="내 포트폴리오"))
+    if benchmark:
+        b_dates, b_idx = benchmark
+        if b_dates and b_idx:
+            fig.add_trace(go.Scatter(x=b_dates, y=b_idx, mode="lines",
+                                     line=dict(color="#f4a261", width=2, dash="dot"),
+                                     name="KOSPI"))
+    fig.add_hline(y=100, line_dash="dash", line_color="rgba(255,255,255,0.2)")
+    fig.update_layout(
+        height=340, template="plotly_dark",
+        title=dict(text="자산 추이 (시작일=100) vs KOSPI", font=dict(size=15)),
+        yaxis_title="지수 (시작=100)",
+        legend=dict(orientation="h", y=1.02), margin=dict(t=55, b=30),
+    )
+    if show:
+        fig.show()
+    return fig
+
+
 # ── 차트 ──────────────────────────────────────────────────────────────────────
 
 def plot_portfolio(ev: dict, show: bool = True) -> go.Figure:

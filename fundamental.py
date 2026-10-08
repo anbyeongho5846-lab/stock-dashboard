@@ -45,12 +45,61 @@ def _fmt_val(val: float) -> str:
     return f"{v:,.1f}{u}"
 
 
+def _kr_name(ticker: str) -> str | None:
+    """kr_tickers.json에서 국내 종목명 조회 (네트워크 불필요)."""
+    try:
+        import json
+        from pathlib import Path
+        data = json.loads(
+            (Path(__file__).parent / "kr_tickers.json").read_text(encoding="utf-8"))
+        v = data.get(ticker)
+        if v and v.get("name"):
+            return v["name"]
+    except Exception:
+        pass
+    return None
+
+
+def _yf_info(sym: str, retries: int = 2) -> dict:
+    """yfinance .info + fast_info 보완, 재시도. 실패 시 {}.
+
+    (.info는 해외(클라우드) 서버에서 Yahoo rate-limit에 자주 걸리므로,
+     fast_info로 현재가·시총을 보완하고 몇 번 재시도한다.)
+    """
+    import time
+    for i in range(retries):
+        try:
+            t = yf.Ticker(sym)
+            info = {}
+            try:
+                info = t.info or {}
+            except Exception:
+                info = {}
+            try:
+                fi = t.fast_info
+                if not info.get("currentPrice") and not info.get("regularMarketPrice"):
+                    lp = getattr(fi, "last_price", None)
+                    if lp:
+                        info["currentPrice"] = float(lp)
+                if not info.get("marketCap"):
+                    mc = getattr(fi, "market_cap", None)
+                    if mc:
+                        info["marketCap"] = float(mc)
+            except Exception:
+                pass
+            if info:
+                return info
+        except Exception:
+            pass
+        if i < retries - 1:
+            time.sleep(1.5)
+    return {}
+
+
 # ── 데이터 수집 ───────────────────────────────────────────────────────────────
 
 def _fetch_kr(ticker: str, years: int) -> dict:
-    """국내 종목: pykrx(Naver엔드포인트) + 네이버금융 스크래핑."""
-    import re as _re
-    import requests as _req
+    """국내 종목: pykrx(Naver엔드포인트) + 클라우드 대비 yfinance 보완."""
     from pykrx import stock as krx
 
     today    = datetime.today()
@@ -58,22 +107,8 @@ def _fetch_kr(ticker: str, years: int) -> dict:
     start_str= (today - timedelta(days=years * 365)).strftime("%Y%m%d")
     week_ago = (today - timedelta(days=7)).strftime("%Y%m%d")
 
-    info: dict = {"shortName": ticker}
-
-    # ── 종목명 (네이버금융 종목 페이지) ────────────────────────────────────
-    try:
-        r = _req.get(
-            "https://finance.naver.com/item/main.naver",
-            params={"code": ticker},
-            headers={"User-Agent": "Mozilla/5.0"},
-            timeout=8,
-        )
-        text = r.content.decode("utf-8", errors="replace")
-        m = _re.search(r"<title>([^<:(]+)", text)
-        if m:
-            info["shortName"] = m.group(1).strip()
-    except Exception:
-        pass
+    # 종목명: kr_tickers.json (네트워크 불필요, 네이버 SPA 이전 영향 없음)
+    info: dict = {"shortName": _kr_name(ticker) or ticker}
 
     # ── 가격 이력 (1차: pykrx, 2차: yfinance .KS/.KQ) ───────────────────
     hist = pd.DataFrame()
@@ -135,6 +170,20 @@ def _fetch_kr(ticker: str, years: int) -> dict:
     except Exception:
         pass
 
+    # ── pykrx가 막혔으면(클라우드) yfinance로 밸류에이션·시총·배당 보완 ──────
+    if not info.get("marketCap") or not info.get("trailingPE"):
+        for suffix in (".KS", ".KQ"):
+            yi = _yf_info(f"{ticker}{suffix}")
+            if yi:
+                for k in ("marketCap", "trailingPE", "forwardPE", "priceToBook",
+                          "returnOnEquity", "debtToEquity", "dividendYield",
+                          "trailingEps", "beta", "sector", "industry"):
+                    if not info.get(k) and yi.get(k) is not None:
+                        info[k] = yi[k]
+                if not info.get("currentPrice") and yi.get("currentPrice"):
+                    info["currentPrice"] = yi["currentPrice"]
+                break
+
     return dict(
         info=info,
         financials=pd.DataFrame(),
@@ -163,31 +212,11 @@ def fetch_all(ticker: str, kr: bool, years: int) -> dict:
     symbol = symbols[0]
 
     for sym in symbols:
-        try:
-            t   = yf.Ticker(sym)
-            _info = {}
-            try:
-                _info = t.info or {}
-            except Exception:
-                pass
-            try:
-                fast = t.fast_info
-                if not _info.get("currentPrice") and not _info.get("regularMarketPrice"):
-                    lp = getattr(fast, "last_price", None)
-                    if lp:
-                        _info["currentPrice"] = float(lp)
-                if not _info.get("marketCap"):
-                    mc = getattr(fast, "market_cap", None)
-                    if mc:
-                        _info["marketCap"] = float(mc)
-            except Exception:
-                pass
-            if _info:
-                info   = _info
-                symbol = sym
-                break
-        except Exception:
-            continue
+        _info = _yf_info(sym)   # .info + fast_info 보완 + 재시도
+        if _info:
+            info   = _info
+            symbol = sym
+            break
 
     t = yf.Ticker(symbol)
     try:   fin  = t.financials

@@ -91,7 +91,7 @@ def show_fundamental():
     c5, c6, c7, c8 = st.columns(4)
     if roe  is not None: c5.metric("💹 ROE",      f"{roe*100:.2f}%")
     if de   is not None: c6.metric("📐 부채비율",  f"{de:.2f}%")
-    if div  is not None: c7.metric("💸 배당수익률", f"{div*100:.2f}%")
+    if div  is not None: c7.metric("💸 배당수익률", f"{div:.2f}%")
     if beta is not None: c8.metric("🎢 Beta",      f"{beta:.3f}")
 
     st.markdown("---")

@@ -48,10 +48,12 @@ from views.buy_timing import show_signal_monitor
 from views.portfolio import show_virtual_portfolio
 from views.ai_assistant import show_ai_assistant
 from views.compare_stocks import show_compare_stocks
+from views.dividend_calendar import show_dividend_calendar
 
 PAGES = {
     "ai":        st.Page(show_ai_assistant,      title="AI 투자 비서",  icon="🗣️", url_path="ai"),
     "comparestk": st.Page(show_compare_stocks,   title="종목 비교",     icon="🆚", url_path="compare-stocks"),
+    "dividend":  st.Page(show_dividend_calendar, title="배당·실적",     icon="💵", url_path="dividend"),
     "market":    st.Page(show_market,            title="시장 현황",     icon="🏠", url_path="market", default=True),
     "sectors":   st.Page(show_sector,            title="섹터 / 테마",   icon="🗂️", url_path="sectors"),
     "sentiment": st.Page(show_sentiment,         title="시장 감성",     icon="🧠", url_path="sentiment"),
@@ -75,7 +77,7 @@ nav = st.navigation(
     {
         "AI":         [PAGES["ai"]],
         "시장":       [PAGES["market"], PAGES["sectors"], PAGES["sentiment"]],
-        "종목":       [PAGES["stock"], PAGES["company"], PAGES["comparestk"], PAGES["investors"], PAGES["advanced"]],
+        "종목":       [PAGES["stock"], PAGES["company"], PAGES["comparestk"], PAGES["dividend"], PAGES["investors"], PAGES["advanced"]],
         "전략":       [PAGES["backtest"], PAGES["compare"], PAGES["optimizer"]],
         "스크리닝":   [PAGES["scanner"], PAGES["dart"], PAGES["timing"]],
         "포트폴리오": [PAGES["portfolio"]],

@@ -51,7 +51,7 @@ MODULES = [
     "views.company", "views.investors", "views.advanced", "views.backtest",
     "views.strategy_compare", "views.ma_optimizer", "views.watchlist_scanner",
     "views.dart", "views.buy_timing", "views.portfolio", "views.ai_assistant",
-    "views.compare_stocks",
+    "views.compare_stocks", "views.dividend_calendar",
 ]
 for m in MODULES:
     check(f"import {m}", (lambda mm=m: importlib.import_module(mm)), deterministic=True)

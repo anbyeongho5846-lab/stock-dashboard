@@ -15,53 +15,89 @@ from common import (
 )
 
 
+def _try_sym(sym: str):
+    """한 심볼에서 배당/실적 조각을 독립적으로 수집. (성공여부, info, 연간배당, 실적일, 배당락일)."""
+    import yfinance as yf
+    tk = yf.Ticker(sym)
+    info, annual, earn, exdiv, got = {}, {}, None, None, False
+    # ① info (quoteSummary — 해외 서버에서 자주 rate-limit됨)
+    try:
+        info = tk.info or {}
+        if len(info) > 5:
+            got = True
+    except Exception:
+        info = {}
+    # ② 배당 이력 (chart 엔드포인트 — 클라우드에서도 대체로 동작)
+    try:
+        d = tk.dividends
+        if d is not None and len(d):
+            for idx, v in d.items():
+                annual[idx.year] = annual.get(idx.year, 0.0) + float(v)
+            got = True
+    except Exception:
+        pass
+    # ③ 일정 (calendar — quoteSummary)
+    try:
+        cal = tk.calendar
+        if isinstance(cal, dict):
+            ed = cal.get("Earnings Date")
+            if ed:
+                earn = str(ed[0] if isinstance(ed, list) else ed)[:10]; got = True
+            xd = cal.get("Ex-Dividend Date")
+            if xd:
+                exdiv = str(xd)[:10]
+    except Exception:
+        pass
+    return got, info, annual, earn, exdiv
+
+
 @st.cache_data(ttl=3600, show_spinner=False)
 def _div_earn(ticker: str, is_kr: bool):
-    """yfinance에서 배당·실적 정보 수집. 실패 시 None."""
-    import yfinance as yf
+    """yfinance 배당·실적 정보(항목별 독립·재시도·보완). 전부 실패 시 None."""
+    import time
     syms = [f"{ticker}.KS", f"{ticker}.KQ"] if is_kr else [ticker]
-    for sym in syms:
-        try:
-            tk = yf.Ticker(sym)
-            info = tk.info or {}
-            price = (info.get("currentPrice") or info.get("regularMarketPrice")
-                     or info.get("previousClose"))
-            if is_kr and not price and sym != syms[-1]:
-                continue   # 잘못된 접미사 → 다음 시도
 
-            annual = {}
+    for attempt in range(2):
+        for sym in syms:
             try:
-                d = tk.dividends
-                if d is not None and len(d):
-                    for idx, v in d.items():
-                        annual[idx.year] = annual.get(idx.year, 0.0) + float(v)
+                got, info, annual, earn, exdiv = _try_sym(sym)
             except Exception:
-                pass
+                got, info, annual, earn, exdiv = False, {}, {}, None, None
 
-            earn = exdiv = None
-            try:
-                cal = tk.calendar
-                if isinstance(cal, dict):
-                    ed = cal.get("Earnings Date")
-                    if ed:
-                        earn = str(ed[0] if isinstance(ed, list) else ed)[:10]
-                    xd = cal.get("Ex-Dividend Date")
-                    if xd:
-                        exdiv = str(xd)[:10]
-            except Exception:
-                pass
+            if is_kr and not got and sym != syms[-1]:
+                continue   # 접미사(.KS/.KQ) 틀림 → 다음 시도
 
-            return {
-                "symbol": sym, "price": price,
-                "yield": info.get("dividendYield"),
-                "rate": info.get("dividendRate"),
-                "payout": info.get("payoutRatio"),
-                "five": info.get("fiveYearAvgDividendYield"),
-                "annual": dict(sorted(annual.items())),
-                "earnings_date": earn, "exdiv_date": exdiv,
-            }
-        except Exception:
-            continue
+            if got:
+                price = (info.get("currentPrice") or info.get("regularMarketPrice")
+                         or info.get("previousClose"))
+                # 가격이 없으면 앱 자체 소스(클라우드에서 동작)로 보완
+                if not price:
+                    try:
+                        df = cached_stock(ticker, is_kr, 10)
+                        if not df.empty:
+                            price = float(df["Close"].iloc[-1])
+                    except Exception:
+                        pass
+                # info에 배당수익률이 없고 배당이력+가격이 있으면 '완전한 최근 연도' 배당/가격으로 근사
+                dy = info.get("dividendYield")
+                if dy is None and annual and price:
+                    import datetime as _dt
+                    cur_y = _dt.date.today().year
+                    full_years = [yy for yy in sorted(annual) if yy < cur_y]
+                    base_y = full_years[-1] if full_years else max(annual)
+                    last_div = annual.get(base_y, 0)
+                    if last_div:
+                        dy = round(last_div / price * 100, 2)
+
+                return {
+                    "symbol": sym, "price": price,
+                    "yield": dy, "rate": info.get("dividendRate"),
+                    "payout": info.get("payoutRatio"),
+                    "five": info.get("fiveYearAvgDividendYield"),
+                    "annual": dict(sorted(annual.items())),
+                    "earnings_date": earn, "exdiv_date": exdiv,
+                }
+        time.sleep(2)   # rate-limit 완화 후 재시도
     return None
 
 
@@ -86,7 +122,11 @@ def show_dividend_calendar():
         data = _div_earn(ticker.strip().upper(), is_kr)
 
     if not data:
-        st.error("데이터를 가져오지 못했습니다. 종목 코드를 확인하세요.")
+        st.warning(
+            "배당·실적 데이터를 가져오지 못했습니다.  \n"
+            "Yahoo Finance가 해외(클라우드) 서버에서 일시적으로 요청을 제한할 때 발생할 수 있습니다. "
+            "**잠시 후 다시 시도**하거나, 종목 코드가 맞는지 확인해 주세요."
+        )
         return
 
     cur = "원" if is_kr else "$"

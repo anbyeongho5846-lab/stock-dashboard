@@ -34,10 +34,24 @@ def show_signal_monitor():
             "- 아래 **매수 계획 계산기**로 예산 대비 몇 주를 살 수 있는지, 손절가는 얼마인지 계산할 수 있습니다."
         )
 
-    # ── 감시 목록 관리 ────────────────────────────────────────────────────────
-    if "signal_watchlist" not in st.session_state:
-        default = load_watchlist(DEFAULT_WATCHLIST) if DEFAULT_WATCHLIST.exists() else []
-        st.session_state.signal_watchlist = default
+    # ── 관심종목 코드 + 감시 목록 로드(영속화) ──────────────────────────────────
+    from virtual_portfolio import sanitize_pid, load_watchlist_db, save_watchlist_db
+
+    wl_code = sanitize_pid(st.text_input(
+        "내 코드 (관심종목 저장용)",
+        value=st.session_state.get("vp_code", "default"),
+        key="sm_code_input",
+        help="가상투자와 같은 코드를 쓰면 관심종목이 저장되어 재접속·새로고침해도 유지됩니다.",
+    ))
+    st.session_state["vp_code"] = wl_code
+
+    # 코드가 바뀌었거나 처음이면 저장소에서 로드 (없으면 기본 목록)
+    if st.session_state.get("signal_wl_code") != wl_code:
+        loaded = load_watchlist_db(wl_code)
+        if loaded is None:
+            loaded = load_watchlist(DEFAULT_WATCHLIST) if DEFAULT_WATCHLIST.exists() else []
+        st.session_state.signal_watchlist = loaded
+        st.session_state["signal_wl_code"] = wl_code
 
     with st.expander("📋 감시 종목 관리", expanded=False):
         add_c1, add_c2, add_c3 = st.columns([2, 2, 1])
@@ -52,6 +66,7 @@ def show_signal_monitor():
                 t = new_ticker.strip().upper()
                 if t and (t, new_market) not in st.session_state.signal_watchlist:
                     st.session_state.signal_watchlist.append((t, new_market))
+                    save_watchlist_db(st.session_state.signal_watchlist, wl_code)
                     st.success(f"{t} 추가됨")
                     st.rerun()
 
@@ -61,9 +76,10 @@ def show_signal_monitor():
             if st.button("🗑️ 삭제", key="sm_del_btn"):
                 idx = labels.index(del_sel)
                 st.session_state.signal_watchlist.pop(idx)
+                save_watchlist_db(st.session_state.signal_watchlist, wl_code)
                 st.rerun()
 
-        st.info(f"현재 {len(st.session_state.signal_watchlist)}개 종목 감시 중")
+        st.info(f"현재 {len(st.session_state.signal_watchlist)}개 종목 감시 중  ·  저장 코드: {wl_code}")
 
     # ── 스캔 실행 ─────────────────────────────────────────────────────────────
     @st.cache_data(ttl=3600)

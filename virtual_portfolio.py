@@ -121,6 +121,52 @@ def reset_portfolio(capital: float, pid: str = "default") -> dict:
     return p
 
 
+# ── 관심종목(watchlist) 저장 — portfolio 테이블 재사용(id="wl:<code>") ─────────
+
+def _wl_id(code: str) -> str:
+    return "wl:" + sanitize_pid(code)
+
+
+def _wl_file(code: str) -> Path:
+    return PORTFOLIO_FILE.parent / f"watchlist_{sanitize_pid(code)}.json"
+
+
+def load_watchlist_db(code: str = "default"):
+    """관심종목 로드 → [(ticker, market), ...] 또는 None(미설정/실패)."""
+    sb = _get_supabase()
+    if sb:
+        try:
+            res = sb.table("portfolio").select("data").eq("id", _wl_id(code)).execute()
+            if res.data:
+                wl = res.data[0]["data"].get("watchlist", [])
+                return [tuple(x) for x in wl]
+        except Exception:
+            pass
+    f = _wl_file(code)
+    if f.exists():
+        try:
+            wl = json.loads(f.read_text(encoding="utf-8")).get("watchlist", [])
+            return [tuple(x) for x in wl]
+        except Exception:
+            pass
+    return None
+
+
+def save_watchlist_db(watchlist, code: str = "default") -> None:
+    """관심종목 저장 — Supabase 우선, 없으면 로컬 파일."""
+    data = {"watchlist": [list(x) for x in watchlist]}
+    sb = _get_supabase()
+    if sb:
+        try:
+            sb.table("portfolio").upsert({"id": _wl_id(code), "data": data}).execute()
+            return
+        except Exception:
+            pass
+    _wl_file(code).write_text(
+        json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8"
+    )
+
+
 # ── 시세 조회 ─────────────────────────────────────────────────────────────────
 
 def get_current_price(ticker: str, market: str) -> float | None:

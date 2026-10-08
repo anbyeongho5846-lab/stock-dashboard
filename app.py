@@ -46,8 +46,10 @@ from views.watchlist_scanner import show_scanner
 from views.dart import show_dart_screener
 from views.buy_timing import show_signal_monitor
 from views.portfolio import show_virtual_portfolio
+from views.ai_assistant import show_ai_assistant
 
 PAGES = {
+    "ai":        st.Page(show_ai_assistant,      title="AI 투자 비서",  icon="🗣️", url_path="ai"),
     "market":    st.Page(show_market,            title="시장 현황",     icon="🏠", url_path="market", default=True),
     "sectors":   st.Page(show_sector,            title="섹터 / 테마",   icon="🗂️", url_path="sectors"),
     "sentiment": st.Page(show_sentiment,         title="시장 감성",     icon="🧠", url_path="sentiment"),
@@ -69,6 +71,7 @@ common.NAV = PAGES
 
 nav = st.navigation(
     {
+        "AI":         [PAGES["ai"]],
         "시장":       [PAGES["market"], PAGES["sectors"], PAGES["sentiment"]],
         "종목":       [PAGES["stock"], PAGES["company"], PAGES["investors"], PAGES["advanced"]],
         "전략":       [PAGES["backtest"], PAGES["compare"], PAGES["optimizer"]],

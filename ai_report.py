@@ -63,15 +63,40 @@ def generate_stock_report(
         "generationConfig": {
             "temperature": 0.4,
             "maxOutputTokens": 1024,
-            # thinking 모델의 사고 토큰이 답변 예산·시간을 잠식하지 않도록 끈다
-            # (요약 작업엔 불필요 → 더 빠르고 응답이 잘림 없이 나옴)
+            "thinkingConfig": {"thinkingBudget": 0},   # thinking 끄기(빠르고 잘림 없음)
+        },
+    }
+    return _gemini_post(body, api_key, model, timeout)
+
+
+def ask_gemini(
+    system_text: str,
+    messages: list,
+    api_key: str,
+    model: str = GEMINI_MODEL,
+    timeout: int = 30,
+) -> str:
+    """대화형 질의. messages=[{"role":"user"|"model","text":...}, ...]. 실패 시 안내 문자열."""
+    if not api_key:
+        return ""
+    contents = [{"role": m["role"], "parts": [{"text": m["text"]}]} for m in messages]
+    body = {
+        "systemInstruction": {"parts": [{"text": system_text}]},
+        "contents": contents,
+        "generationConfig": {
+            "temperature": 0.5,
+            "maxOutputTokens": 1024,
             "thinkingConfig": {"thinkingBudget": 0},
         },
     }
+    return _gemini_post(body, api_key, model, timeout)
+
+
+def _gemini_post(body: dict, api_key: str, model: str, timeout: int = 30) -> str:
+    """Gemini generateContent 호출(503·타임아웃 1회 재시도). 실패 시 안내 문자열 반환."""
     headers = {"x-goog-api-key": api_key, "Content-Type": "application/json"}
     url = _ENDPOINT.format(model=model)
 
-    # 과부하(503)·타임아웃 시 1회 재시도
     resp = None
     for attempt in range(2):
         try:
@@ -81,7 +106,7 @@ def generate_stock_report(
                 continue
             return "⚠️ 응답이 지연됩니다. 잠시 후 다시 시도해 주세요."
         except Exception as e:
-            return f"⚠️ 리포트를 생성하지 못했습니다: {type(e).__name__}"
+            return f"⚠️ 요청에 실패했습니다: {type(e).__name__}"
         if resp.status_code == 503 and attempt == 0:
             time.sleep(1.5)
             continue
@@ -96,17 +121,16 @@ def generate_stock_report(
         if code == 429:
             return "⚠️ 요청이 많아 잠시 후 다시 시도해 주세요. (무료 한도 초과)"
         if code == 503:
-            return "⚠️ AI 모델이 일시적으로 혼잡합니다. 잠시 후 다시 눌러 주세요."
-        return f"⚠️ 리포트 생성 실패 (HTTP {code})."
+            return "⚠️ AI 모델이 일시적으로 혼잡합니다. 잠시 후 다시 시도해 주세요."
+        return f"⚠️ 요청 실패 (HTTP {code})."
 
     try:
         j = resp.json()
     except Exception:
         return "⚠️ 응답을 해석하지 못했습니다."
-
     cands = j.get("candidates", [])
     if not cands:
-        return "⚠️ 리포트 생성 결과가 비어 있습니다. (안전 필터 또는 빈 응답)"
+        return "⚠️ 결과가 비어 있습니다. (안전 필터 또는 빈 응답)"
     parts = cands[0].get("content", {}).get("parts", [])
     text = " ".join(p.get("text", "") for p in parts).strip()
-    return text or "⚠️ 리포트 내용을 받지 못했습니다."
+    return text or "⚠️ 내용을 받지 못했습니다."

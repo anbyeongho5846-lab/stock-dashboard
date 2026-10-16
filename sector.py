@@ -194,8 +194,20 @@ def print_report(df: pd.DataFrame, type_label: str) -> None:
 # 히트맵과 등락률 순위를 각각 독립된 그림으로 만든다
 # (한 그림에 좌우로 붙이면 둘 다 좁아지고 컬러바가 바차트 레이블을 가림).
 
+# 히트맵 색: ±3%에서 색이 꽉 차도록 고정 → +1%대 변동도 한눈에 빨강/파랑으로 구분
+# (국내 관례: 상승 빨강 / 하락 파랑, 보합은 회색)
+_TM_RANGE = 3.0
+_TM_COLORSCALE = [
+    [0.0,  "#1d4ed8"],   # -3% 이하
+    [0.3,  "#35548f"],
+    [0.5,  "#414554"],   # 보합
+    [0.7,  "#963c48"],
+    [1.0,  "#ef4444"],   # +3% 이상
+]
+
+
 def plot_treemap(df: pd.DataFrame, type_label: str) -> go.Figure:
-    """업종/테마 히트맵 — 크기: 종목수, 색: 등락률."""
+    """업종/테마 히트맵 — 크기: 종목수(제곱근), 색: 등락률."""
     fig = go.Figure()
     if df.empty or "등락률" not in df.columns:
         return fig
@@ -203,54 +215,56 @@ def plot_treemap(df: pd.DataFrame, type_label: str) -> go.Figure:
     if tm.empty:
         return fig
 
-    has_size = "종목수" in tm.columns and tm["종목수"].notna().any()
-    has_updn = "상승수" in tm.columns and tm["상승수"].notna().any()
+    def _col(name):
+        return (tm[name].fillna(0).astype(int) if name in tm.columns
+                else pd.Series(0, index=tm.index))
 
-    # 크기: 종목수 있으면 사용, 없으면 균등
-    sizes = (tm["종목수"].clip(lower=1) if has_size
-             else pd.Series([1] * len(tm), index=tm.index))
+    n_stock, n_up, n_down = _col("종목수"), _col("상승수"), _col("하락수")
 
-    if has_updn:
-        hover_extra = [
-            f"상승: {int(row.get('상승수', 0))} / 하락: {int(row.get('하락수', 0))}"
-            for _, row in tm.iterrows()
-        ]
-        customdata = list(zip(tm["등락률"], hover_extra))
-        hovertemplate = (
-            "<b>%{label}</b><br>"
-            "등락률: %{customdata[0]:+.2f}%<br>"
-            "%{customdata[1]}<extra></extra>"
-        )
-        texttemplate = "<b>%{label}</b><br>%{customdata[0]:+.2f}%"
-    else:
-        customdata = tm["등락률"].values
-        hovertemplate = "<b>%{label}</b><br>등락률: %{customdata:+.2f}%<extra></extra>"
-        texttemplate = "<b>%{label}</b><br>%{customdata:+.2f}%"
+    # 크기: 종목수의 제곱근 → '기타'처럼 종목이 아주 많은 업종이 화면을 독차지하지 않게
+    sizes = (n_stock.clip(lower=1) ** 0.5 if n_stock.any()
+             else pd.Series(1, index=tm.index))
+
+    # 표시 문자열은 파이썬에서 미리 만든다
+    # (트리맵 texttemplate은 customdata에 '+.2f' 서식이 적용되지 않아 '5.3%'처럼 보였음)
+    names = tm["섹터명"].astype(str)
+    chg   = tm["등락률"].astype(float)
+    text  = [f"<b>{n}</b><br>{v:+.2f}%" for n, v in zip(names, chg)]
+    hover = [f"<b>{n}</b><br>등락률: {v:+.2f}%<br>종목 {s}개 (▲{u} ▼{d})"
+             for n, v, s, u, d in zip(names, chg, n_stock, n_up, n_down)]
 
     fig.add_trace(go.Treemap(
-        labels=tm["섹터명"].astype(str),
+        labels=names,
         parents=[""] * len(tm),
         values=sizes,
-        customdata=customdata,
-        texttemplate=texttemplate,
+        text=text,
+        textinfo="text",
+        hovertext=hover,
+        hovertemplate="%{hovertext}<extra></extra>",
+        textposition="middle center",
+        textfont=dict(size=15, color="white"),   # 큰 타일은 15px, 작은 타일은 자동 축소
+        pathbar=dict(visible=False),             # 단일 계층이라 상단 경로바 불필요
         marker=dict(
             colors=tm["등락률"],
-            colorscale=[
-                [0.0, "#457b9d"],   # 파랑 (하락)
-                [0.5, "#1e1e2e"],   # 중립
-                [1.0, "#e63946"],   # 빨강 (상승)
-            ],
-            cmid=0,
+            colorscale=_TM_COLORSCALE,
+            cmin=-_TM_RANGE, cmax=_TM_RANGE,
+            line=dict(color="#0e1117", width=2),   # 타일 경계를 또렷하게
+            pad=dict(t=0, l=0, r=0, b=0),          # 상단 빈 띠(루트 헤더 영역) 제거
             showscale=True,
-            colorbar=dict(title="등락률(%)", len=0.85,
-                          tickfont=dict(color="white")),
+            colorbar=dict(
+                title=dict(text="등락률", side="top"),
+                tickvals=[-3, -2, -1, 0, 1, 2, 3],
+                ticktext=["-3%↓", "-2%", "-1%", "0", "+1%", "+2%", "+3%↑"],
+                thickness=12, len=0.8,
+                tickfont=dict(color="#cbd5e1"),
+            ),
         ),
-        hovertemplate=hovertemplate,
     ))
     fig.update_layout(
-        height=620,
+        height=620 if len(tm) <= 100 else 780,
         template="plotly_dark",
         margin=dict(t=10, b=10, l=5, r=5),
+        hoverlabel=dict(font_size=13),
     )
     return fig
 

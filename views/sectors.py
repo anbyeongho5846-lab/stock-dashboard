@@ -129,8 +129,15 @@ def show_sector():
         ev_map = st.plotly_chart(plot_treemap(df, type_label), width="stretch",
                                  on_select="rerun", key=f"sec_tm_{type_code}")
     with tab_bar:
-        ev_bar = st.plotly_chart(plot_bar(df, type_label), width="stretch",
-                                 on_select="rerun", key=f"sec_bar_{type_code}")
+        n_all, top_n = int(df["등락률"].notna().sum()), 15
+        show_all = n_all > top_n * 2 and st.toggle(
+            f"전체 {n_all}개 보기", key=f"sec_bar_all_{type_code}")
+        if n_all > top_n * 2 and not show_all:
+            st.caption(f"상위 {top_n}개 · 하위 {top_n}개를 표시합니다. "
+                       f"(막대에 마우스를 올리면 상세, 클릭하면 드릴다운)")
+        ev_bar = st.plotly_chart(plot_bar(df, type_label, None if show_all else top_n),
+                                 width="stretch", on_select="rerun",
+                                 key=f"sec_bar_{type_code}")
 
     # 두 차트의 선택 상태가 모두 남아 있으므로, '새로 바뀐' 클릭만 반영
     valid_names = set(df["섹터명"].astype(str))

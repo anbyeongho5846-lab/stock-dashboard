@@ -269,40 +269,57 @@ def plot_treemap(df: pd.DataFrame, type_label: str) -> go.Figure:
     return fig
 
 
-def plot_bar(df: pd.DataFrame, type_label: str) -> go.Figure:
-    """업종/테마별 등락률 수평 바차트."""
+_UP, _DOWN = "#ef4444", "#3b82f6"   # 국내 관례: 상승 빨강 / 하락 파랑
+
+
+def plot_bar(df: pd.DataFrame, type_label: str, top_n: int | None = 15) -> go.Figure:
+    """업종/테마별 등락률 수평 바차트 — 기본은 상위 N + 하위 N, top_n=None이면 전체."""
     fig = go.Figure()
     if df.empty or "등락률" not in df.columns:
         return fig
-    bar = df.dropna(subset=["등락률"]).sort_values("등락률", ascending=True)
+    bar = df.dropna(subset=["등락률"]).sort_values("등락률", ascending=False)
     if bar.empty:
         return fig
 
-    colors = ["#e63946" if v >= 0 else "#457b9d" for v in bar["등락률"]]
-    max_abs = float(bar["등락률"].abs().max()) or 1.0
+    names = bar["섹터명"].astype(str).tolist()
+    vals  = bar["등락률"].astype(float).tolist()
 
-    # y축 표시용 레이블: 최대 11자 (넘치면 … 처리), 전체 이름은 hover로
-    full_names  = bar["섹터명"].astype(str)
-    short_names = [s[:11] + "…" if len(s) > 11 else s for s in full_names]
+    # 상위 N + 하위 N만 표시하고, 사이에 '생략' 행을 넣어 구간을 구분
+    if top_n and len(bar) > top_n * 2:
+        gap = f"⋯ 중간 {len(bar) - top_n * 2}개 생략 ⋯"
+        names = names[:top_n] + [gap] + names[-top_n:]
+        vals  = vals[:top_n] + [None] + vals[-top_n:]
 
     fig.add_trace(go.Bar(
-        x=bar["등락률"],
-        y=short_names,
+        x=vals,
+        y=names,          # 전체 이름 사용 (클릭 시 드릴다운에 그대로 연결됨)
         orientation="h",
-        marker_color=colors,
-        name="등락률",
-        customdata=full_names,
-        hovertemplate="<b>%{customdata}</b><br>등락률: %{x:+.2f}%<extra></extra>",
+        marker_color=[_UP if (v or 0) >= 0 else _DOWN for v in vals],
+        text=["" if v is None else f"{v:+.2f}%" for v in vals],
+        textposition="outside",
+        textfont=dict(size=12, color="#e2e8f0"),
+        cliponaxis=False,
+        hovertemplate="<b>%{y}</b><br>등락률: %{x:+.2f}%<extra></extra>",
     ))
     fig.add_vline(x=0, line_dash="dash", line_width=1,
                   line_color="rgba(255,255,255,0.3)")
+
+    # x축: 실제 값 범위 + 막대 밖 값 라벨 공간 (모두 상승한 날엔 왼쪽 여백을 최소화)
+    real = [v for v in vals if v is not None]
+    lo, hi = min(min(real), 0.0), max(max(real), 0.0)
+    pad = max(hi - lo, 1.0) * 0.18
+    x_range = [lo - pad if lo < 0 else -pad * 0.15,
+               hi + pad if hi > 0 else pad * 0.15]
+
     fig.update_layout(
-        height=max(560, 70 + len(bar) * 24),
+        height=max(380, 70 + len(names) * 26),
         template="plotly_dark",
         margin=dict(t=10, b=40, l=10, r=20),
         showlegend=False,
-        xaxis=dict(title="등락률 (%)", range=[-(max_abs * 1.12), max_abs * 1.12]),
-        yaxis=dict(tickfont=dict(size=9)),
+        bargap=0.25,
+        xaxis=dict(title="등락률 (%)", range=x_range, zeroline=False),
+        yaxis=dict(autorange="reversed", tickfont=dict(size=12), automargin=True),
+        hoverlabel=dict(font_size=13),
     )
     return fig
 

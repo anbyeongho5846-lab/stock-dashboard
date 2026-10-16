@@ -8,12 +8,11 @@
 
 import argparse
 import sys
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 
 import pandas as pd
 import plotly.graph_objects as go
 import requests
-from plotly.subplots import make_subplots
 
 if sys.platform == "win32":
     try:
@@ -31,6 +30,13 @@ _HEADERS = {
 }
 
 _TYPE_LABEL = {"upjong": "업종", "theme": "테마"}
+
+# 클라우드 서버는 UTC → 표시 시각은 한국 시간(UTC+9)으로 고정
+_KST = timezone(timedelta(hours=9))
+
+
+def _now_kst_str() -> str:
+    return datetime.now(_KST).strftime("%Y-%m-%d %H:%M")
 
 # 네이버 모바일 증권 JSON API
 # (2026-09 개편: finance.naver.com sise_group 페이지가 stock.naver.com SPA로
@@ -138,7 +144,7 @@ def print_report(df: pd.DataFrame, type_label: str) -> None:
         print("[오류] 데이터가 없습니다.")
         return
 
-    now = datetime.today().strftime("%Y-%m-%d %H:%M")
+    now = _now_kst_str()
     print(f"\n{'='*60}")
     print(f"  {type_label}별 시세 현황  ({now})")
     print(f"  총 {len(df)}개 {type_label}")
@@ -185,133 +191,120 @@ def print_report(df: pd.DataFrame, type_label: str) -> None:
 
 
 # ── 차트 ─────────────────────────────────────────────────────────────────────
+# 히트맵과 등락률 순위를 각각 독립된 그림으로 만든다
+# (한 그림에 좌우로 붙이면 둘 다 좁아지고 컬러바가 바차트 레이블을 가림).
 
-def plot(df: pd.DataFrame, type_label: str, show: bool = True) -> go.Figure:
-    if df.empty:
-        fig = go.Figure()
-        if show:
-            fig.show()
+def plot_treemap(df: pd.DataFrame, type_label: str) -> go.Figure:
+    """업종/테마 히트맵 — 크기: 종목수, 색: 등락률."""
+    fig = go.Figure()
+    if df.empty or "등락률" not in df.columns:
+        return fig
+    tm = df.dropna(subset=["등락률"]).copy()
+    if tm.empty:
         return fig
 
-    has_chg   = "등락률" in df.columns and df["등락률"].notna().any()
-    has_size  = "종목수" in df.columns and df["종목수"].notna().any()
-    has_updn  = "상승수" in df.columns and df["상승수"].notna().any()
+    has_size = "종목수" in tm.columns and tm["종목수"].notna().any()
+    has_updn = "상승수" in tm.columns and tm["상승수"].notna().any()
 
-    # ── 서브플롯 구성 (트리맵 | 수평 바) ─────────────────────────────────────
-    treemap_title = (f"{type_label} 히트맵  (크기: 종목수 · 색: 등락률)"
-                     if has_size else f"{type_label} 현황")
-    fig = make_subplots(
-        rows=1, cols=2,
-        column_widths=[0.46, 0.54],
-        horizontal_spacing=0.22,   # y축 한글 레이블이 히트맵과 겹치지 않도록
-        subplot_titles=(treemap_title, f"{type_label}별 등락률 (%)"),
-        specs=[[{"type": "treemap"}, {"type": "bar"}]],
-    )
+    # 크기: 종목수 있으면 사용, 없으면 균등
+    sizes = (tm["종목수"].clip(lower=1) if has_size
+             else pd.Series([1] * len(tm), index=tm.index))
 
-    # ① 트리맵 (종목수를 크기로, 등락률을 색으로)
-    if has_chg:
-        tm = df.dropna(subset=["등락률"]).copy()
-        # 크기: 종목수 있으면 사용, 없으면 균등
-        sizes = (tm["종목수"].clip(lower=1) if has_size
-                 else pd.Series([1] * len(tm), index=tm.index))
-
-        # 호버 텍스트 추가 정보
-        if has_updn:
-            hover_extra = [
-                f"상승: {int(row.get('상승수', 0))} / 하락: {int(row.get('하락수', 0))}"
-                for _, row in tm.iterrows()
-            ]
-            customdata = list(zip(tm["등락률"], hover_extra))
-            hovertemplate = (
-                "<b>%{label}</b><br>"
-                "등락률: %{customdata[0]:+.2f}%<br>"
-                "%{customdata[1]}<extra></extra>"
-            )
-        else:
-            customdata = tm["등락률"].values
-            hovertemplate = (
-                "<b>%{label}</b><br>"
-                "등락률: %{customdata:+.2f}%<extra></extra>"
-            )
-
-        fig.add_trace(go.Treemap(
-            labels=tm["섹터명"].astype(str),
-            parents=[""] * len(tm),
-            values=sizes,
-            customdata=customdata,
-            texttemplate="<b>%{label}</b><br>%{customdata[0]:+.2f}%" if has_updn
-                         else "<b>%{label}</b><br>%{customdata:+.2f}%",
-            marker=dict(
-                colors=tm["등락률"],
-                colorscale=[
-                    [0.0, "#457b9d"],   # 파랑 (하락)
-                    [0.5, "#1e1e2e"],   # 중립
-                    [1.0, "#e63946"],   # 빨강 (상승)
-                ],
-                cmid=0,
-                showscale=True,
-                colorbar=dict(title="등락률(%)", x=0.50, len=0.85,
-                              tickfont=dict(color="white")),
-            ),
-            hovertemplate=hovertemplate,
-        ), row=1, col=1)
-
-    # ② 수평 바차트 (등락률 오름차순)
-    if has_chg:
-        bar = df.dropna(subset=["등락률"]).sort_values("등락률", ascending=True)
-        colors = ["#e63946" if v >= 0 else "#457b9d" for v in bar["등락률"]]
-
-        abs_vals = bar["등락률"].abs()
-        max_abs  = float(abs_vals.max()) if len(abs_vals) > 0 else 1.0
-
-        # y축 표시용 레이블: 최대 11자 (넘치면 … 처리), 전체 이름은 hover로
-        full_names  = bar["섹터명"].astype(str)
-        short_names = [s[:11] + "…" if len(s) > 11 else s for s in full_names]
-
-        # 바 트레이스
-        fig.add_trace(go.Bar(
-            x=bar["등락률"],
-            y=short_names,
-            orientation="h",
-            marker_color=colors,
-            name="등락률",
-            customdata=full_names,
-            hovertemplate="<b>%{customdata}</b><br>등락률: %{x:+.2f}%<extra></extra>",
-        ), row=1, col=2)
-
-        # 0 기준선
-        if not bar.empty:
-            fig.add_trace(go.Scatter(
-                x=[0, 0],
-                y=[short_names[0], short_names[-1]],
-                mode="lines",
-                line=dict(color="rgba(255,255,255,0.3)", dash="dash", width=1),
-                showlegend=False,
-                hoverinfo="skip",
-            ), row=1, col=2)
-
-        # x축 범위: 바 양쪽에 약간의 여유만 확보 (레이블 없으므로 호버로 확인)
-        fig.update_xaxes(
-            range=[-(max_abs * 1.12), max_abs * 1.12],
-            row=1, col=2,
+    if has_updn:
+        hover_extra = [
+            f"상승: {int(row.get('상승수', 0))} / 하락: {int(row.get('하락수', 0))}"
+            for _, row in tm.iterrows()
+        ]
+        customdata = list(zip(tm["등락률"], hover_extra))
+        hovertemplate = (
+            "<b>%{label}</b><br>"
+            "등락률: %{customdata[0]:+.2f}%<br>"
+            "%{customdata[1]}<extra></extra>"
         )
+        texttemplate = "<b>%{label}</b><br>%{customdata[0]:+.2f}%"
+    else:
+        customdata = tm["등락률"].values
+        hovertemplate = "<b>%{label}</b><br>등락률: %{customdata:+.2f}%<extra></extra>"
+        texttemplate = "<b>%{label}</b><br>%{customdata:+.2f}%"
 
-    now = datetime.today().strftime("%Y-%m-%d %H:%M")
-    n_rows = len(df)
+    fig.add_trace(go.Treemap(
+        labels=tm["섹터명"].astype(str),
+        parents=[""] * len(tm),
+        values=sizes,
+        customdata=customdata,
+        texttemplate=texttemplate,
+        marker=dict(
+            colors=tm["등락률"],
+            colorscale=[
+                [0.0, "#457b9d"],   # 파랑 (하락)
+                [0.5, "#1e1e2e"],   # 중립
+                [1.0, "#e63946"],   # 빨강 (상승)
+            ],
+            cmid=0,
+            showscale=True,
+            colorbar=dict(title="등락률(%)", len=0.85,
+                          tickfont=dict(color="white")),
+        ),
+        hovertemplate=hovertemplate,
+    ))
     fig.update_layout(
-        height=max(560, 70 + n_rows * 24),
+        height=620,
         template="plotly_dark",
-        title=dict(text=f"{type_label}별 시세 현황  —  {now}", font=dict(size=17)),
-        margin=dict(t=80, b=40, l=10, r=20),
-        showlegend=False,
+        margin=dict(t=10, b=10, l=5, r=5),
     )
-    fig.update_xaxes(title_text="등락률 (%)", row=1, col=2)
-    fig.update_yaxes(tickfont=dict(size=9), row=1, col=2)
-
-    if show:
-        fig.show()
-        print("[완료] 브라우저에서 차트를 확인하세요.")
     return fig
+
+
+def plot_bar(df: pd.DataFrame, type_label: str) -> go.Figure:
+    """업종/테마별 등락률 수평 바차트."""
+    fig = go.Figure()
+    if df.empty or "등락률" not in df.columns:
+        return fig
+    bar = df.dropna(subset=["등락률"]).sort_values("등락률", ascending=True)
+    if bar.empty:
+        return fig
+
+    colors = ["#e63946" if v >= 0 else "#457b9d" for v in bar["등락률"]]
+    max_abs = float(bar["등락률"].abs().max()) or 1.0
+
+    # y축 표시용 레이블: 최대 11자 (넘치면 … 처리), 전체 이름은 hover로
+    full_names  = bar["섹터명"].astype(str)
+    short_names = [s[:11] + "…" if len(s) > 11 else s for s in full_names]
+
+    fig.add_trace(go.Bar(
+        x=bar["등락률"],
+        y=short_names,
+        orientation="h",
+        marker_color=colors,
+        name="등락률",
+        customdata=full_names,
+        hovertemplate="<b>%{customdata}</b><br>등락률: %{x:+.2f}%<extra></extra>",
+    ))
+    fig.add_vline(x=0, line_dash="dash", line_width=1,
+                  line_color="rgba(255,255,255,0.3)")
+    fig.update_layout(
+        height=max(560, 70 + len(bar) * 24),
+        template="plotly_dark",
+        margin=dict(t=10, b=40, l=10, r=20),
+        showlegend=False,
+        xaxis=dict(title="등락률 (%)", range=[-(max_abs * 1.12), max_abs * 1.12]),
+        yaxis=dict(tickfont=dict(size=9)),
+    )
+    return fig
+
+
+def plot(df: pd.DataFrame, type_label: str, show: bool = True) -> go.Figure:
+    """CLI용: 히트맵·바차트를 각각 브라우저로 띄우고 히트맵 그림을 반환."""
+    tm_fig  = plot_treemap(df, type_label)
+    bar_fig = plot_bar(df, type_label)
+    title = f"{type_label}별 시세 현황  —  {_now_kst_str()}"
+    tm_fig.update_layout(title=dict(text=title, font=dict(size=17)), margin=dict(t=60))
+    bar_fig.update_layout(title=dict(text=title, font=dict(size=17)), margin=dict(t=60))
+    if show:
+        tm_fig.show()
+        bar_fig.show()
+        print("[완료] 브라우저에서 차트를 확인하세요.")
+    return tm_fig
 
 
 # ── 진입점 ────────────────────────────────────────────────────────────────────

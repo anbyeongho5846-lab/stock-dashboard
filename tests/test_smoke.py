@@ -122,6 +122,16 @@ def t_indices():
 check("market_index.fetch_quotes(KOSPI/KOSDAQ/USDKRW)", t_indices)
 
 
+def t_recent():
+    from market_index import fetch_recent
+    for k in ("CNYKRW", "KR3Y"):          # yfinance에 없는 항목 → 네이버 일별 시세 필수
+        s = fetch_recent(k, 180)
+        assert len(s) > 60, f"{k} 180일 흐름 데이터 부족: {len(s)}행"
+
+
+check("market_index.fetch_recent(180일)", t_recent)
+
+
 def t_news():
     from sentiment import fetch_market_news
     assert len(fetch_market_news()) > 0, "시장 뉴스 비어있음"

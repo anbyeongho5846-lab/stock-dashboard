@@ -6,7 +6,7 @@
 
 import sys
 from concurrent.futures import ThreadPoolExecutor
-from datetime import datetime
+from datetime import datetime, timedelta
 
 import pandas as pd
 import requests
@@ -161,6 +161,55 @@ def fetch_history(key: str, period: str = "3개월") -> pd.Series:
         return pd.Series(dtype=float)
     s = h["Close"].dropna() * it.get("yf_mul", 1)   # 장중 미완성 행(NaN) 제거
     return s
+
+
+def fetch_recent(key: str, days: int = 180) -> pd.Series:
+    """최근 N일 일별 종가 (index=날짜 오름차순).
+    카드와 같은 출처(네이버 일별 시세)를 우선 사용 — 위안화·국고채처럼 yfinance에 없는 항목도 지원.
+    네이버 실패 시 yfinance로 보완."""
+    it = ITEMS[key]
+    cutoff = (datetime.now() - timedelta(days=days)).strftime("%Y-%m-%d")
+    if it["src"] == "kr":
+        url, base = f"https://m.stock.naver.com/api/index/{it['code']}/price", {}
+    elif it["src"] == "world":
+        url, base = f"https://api.stock.naver.com/index/{it['code']}/price", {}
+    else:
+        url = "https://m.stock.naver.com/front-api/marketIndex/prices"
+        base = {"category": it["cat"], "reutersCode": it["code"]}
+
+    closes = {}
+    try:
+        for page in range(1, 6):          # 페이지당 최대 60행 (API 제한)
+            js = _get(url, {**base, "page": page, "pageSize": 60})
+            rows = js.get("result") if isinstance(js, dict) else js
+            if not isinstance(rows, list) or not rows:
+                break
+            for r in rows:
+                d = str(r.get("localTradedAt", ""))[:10]
+                v = _num(r.get("closePrice"))
+                if d and v == v:
+                    closes.setdefault(d, v)   # 최신순으로 오므로 같은 날짜는 첫 값 유지
+            if str(rows[-1].get("localTradedAt", ""))[:10] < cutoff:
+                break
+    except Exception:
+        pass
+
+    s = pd.Series(closes, dtype=float)
+    if not s.empty:
+        s.index = pd.to_datetime(s.index)
+        s = s.sort_index()
+        s = s[s.index >= pd.Timestamp(cutoff)]
+    if len(s) >= 5 or not it.get("yf"):
+        return s
+
+    try:                                  # 보완: yfinance
+        import yfinance as yf
+        h = yf.Ticker(it["yf"]).history(start=cutoff, interval="1d")
+        s = h["Close"].dropna() * it.get("yf_mul", 1)
+        s.index = pd.to_datetime(s.index.date)
+        return s
+    except Exception:
+        return pd.Series(dtype=float)
 
 
 # ── 표시용 헬퍼 ───────────────────────────────────────────────────────────────

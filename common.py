@@ -183,30 +183,40 @@ def chip(label: str) -> None:
 UP_COLOR, DOWN_COLOR = "#ef4444", "#3b82f6"   # 국내 관례: 상승 빨강 / 하락 파랑
 
 
+def fmt_quote_value(v: float, dec: int, unit: str = "") -> str:
+    s = f"{v:,.{dec}f}"
+    return f"${s}" if unit == "$" else f"{s}{unit}"
+
+
+def quote_card_html(q: dict, hint: str = "") -> str:
+    """지수·환율 카드 1장 HTML. hint가 있으면 이름 오른쪽에 작게 표시(클릭 안내 등)."""
+    from market_index import describe_time
+    chg, pct, dec, unit = q["change"], q["pct"], q["dec"], q.get("unit", "")
+    color = UP_COLOR if chg > 0 else DOWN_COLOR if chg < 0 else "#94a3b8"
+    arrow = "▲" if chg > 0 else "▼" if chg < 0 else "-"
+    sub = describe_time(q) + (" · 직전 값" if q.get("stale") else "")
+    hint_html = (f'<span style="color:#60a5fa; font-size:0.72rem; font-weight:600;'
+                 f' white-space:nowrap;">{hint}</span>') if hint else ""
+    return (
+        f'<div class="qcard" style="background:#1a2035; border:1px solid rgba(255,255,255,0.07);'
+        f' border-top:3px solid {color}; border-radius:12px; padding:12px 16px; height:100%;'
+        f' box-shadow:0 2px 8px rgba(0,0,0,0.3); transition:transform .15s, box-shadow .15s;">'
+        f'<div style="display:flex; justify-content:space-between; gap:8px;">'
+        f'<span style="color:#94a3b8; font-size:0.8rem; font-weight:600;">{q["name"]}</span>{hint_html}</div>'
+        f'<div style="color:#f0f4f8; font-size:1.4rem; font-weight:700; margin-top:2px;">'
+        f'{fmt_quote_value(q["price"], dec, unit)}</div>'
+        f'<div style="color:{color}; font-size:0.9rem; font-weight:700;">'
+        f'{arrow} {abs(chg):,.{dec}f} ({pct:+.2f}%)</div>'
+        f'<div style="color:#64748b; font-size:0.72rem; margin-top:4px;">{sub}</div>'
+        f'</div>'
+    )
+
+
 def quote_cards_html(quotes: list, min_w: int = 160) -> str:
     """지수·환율 카드 묶음 HTML (화면 폭에 맞춰 자동 줄바꿈)."""
-    from market_index import describe_time
-    cards = []
-    for q in quotes:
-        chg, pct, dec, unit = q["change"], q["pct"], q["dec"], q.get("unit", "")
-        color = UP_COLOR if chg > 0 else DOWN_COLOR if chg < 0 else "#94a3b8"
-        arrow = "▲" if chg > 0 else "▼" if chg < 0 else "-"
-        price = f"{q['price']:,.{dec}f}"
-        price = f"${price}" if unit == "$" else f"{price}{unit}"
-        sub = describe_time(q) + (" · 직전 값" if q.get("stale") else "")
-        cards.append(
-            f'<div style="background:#1a2035; border:1px solid rgba(255,255,255,0.07);'
-            f' border-top:3px solid {color}; border-radius:12px; padding:12px 16px;'
-            f' box-shadow:0 2px 8px rgba(0,0,0,0.3);">'
-            f'<div style="color:#94a3b8; font-size:0.8rem; font-weight:600;">{q["name"]}</div>'
-            f'<div style="color:#f0f4f8; font-size:1.4rem; font-weight:700; margin-top:2px;">{price}</div>'
-            f'<div style="color:{color}; font-size:0.9rem; font-weight:700;">'
-            f'{arrow} {abs(chg):,.{dec}f} ({pct:+.2f}%)</div>'
-            f'<div style="color:#64748b; font-size:0.72rem; margin-top:4px;">{sub}</div>'
-            f'</div>'
-        )
+    cards = "".join(quote_card_html(q) for q in quotes)
     return (f'<div style="display:grid; grid-template-columns:repeat(auto-fit, minmax({min_w}px, 1fr));'
-            f' gap:12px; margin-bottom:12px;">{"".join(cards)}</div>')
+            f' gap:12px; margin-bottom:12px;">{cards}</div>')
 
 
 def detect_market(ticker: str) -> bool:
@@ -401,6 +411,12 @@ def cached_market_quotes() -> dict:
 def cached_index_history(key: str, period: str) -> pd.Series:
     from market_index import fetch_history
     return fetch_history(key, period)
+
+
+@st.cache_data(ttl=600, show_spinner=False)   # 10분
+def cached_recent_history(key: str, days: int = 180) -> pd.Series:
+    from market_index import fetch_recent
+    return fetch_recent(key, days)
 
 
 @st.cache_data(ttl=3600)

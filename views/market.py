@@ -5,6 +5,8 @@ from datetime import datetime, timedelta
 import pandas as pd
 import streamlit as st
 
+import common
+from common import cached_market_quotes, quote_cards_html
 from common import (
     page_header, chip, detect_market, now_kst,
     fmt_market_cap, fmt_volume,
@@ -28,6 +30,19 @@ def show_market():
             "연습 매매는 **💰 가상 투자**를 눌러보세요.\n"
             "- 모든 데이터는 실시간이며, 설치 없이 링크 하나로 누구나 접속할 수 있습니다."
         )
+
+    # ── 주요 지수 한눈에 (실패해도 아래 순위는 그대로 표시) ──────────────────────
+    try:
+        quotes = cached_market_quotes()
+    except Exception:
+        quotes = {}
+    strip = [quotes[k] for k in ("KOSPI", "KOSDAQ", "USDKRW", "SPX") if k in quotes]
+    if strip:
+        chip("🌐 주요 지수 · 환율")
+        st.markdown(quote_cards_html(strip), unsafe_allow_html=True)
+        if common.NAV.get("indices"):
+            st.page_link(common.NAV["indices"], label="해외 지수·금리·원자재까지 전체 보기 →", icon="🌐")
+        st.markdown("---")
 
     col1, col2, col3 = st.columns([2, 2, 6])
     with col1:

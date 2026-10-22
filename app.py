@@ -33,6 +33,7 @@ inject_css()
 # ── 페이지 등록 ───────────────────────────────────────────────────────────────
 
 from views.market import show_market
+from views.indices import show_indices
 from views.sectors import show_sector
 from views.market_sentiment import show_sentiment
 from views.stock import show_analyzer
@@ -55,6 +56,7 @@ PAGES = {
     "comparestk": st.Page(show_compare_stocks,   title="종목 비교",     icon="🆚", url_path="compare-stocks"),
     "dividend":  st.Page(show_dividend_calendar, title="배당·실적",     icon="💵", url_path="dividend"),
     "market":    st.Page(show_market,            title="시장 현황",     icon="🏠", url_path="market", default=True),
+    "indices":   st.Page(show_indices,           title="지수 · 환율",   icon="🌐", url_path="indices"),
     "sectors":   st.Page(show_sector,            title="섹터 / 테마",   icon="🗂️", url_path="sectors"),
     "sentiment": st.Page(show_sentiment,         title="시장 감성",     icon="🧠", url_path="sentiment"),
     "stock":     st.Page(show_analyzer,          title="종목 분석",     icon="📈", url_path="stock"),
@@ -76,7 +78,7 @@ common.NAV = PAGES
 nav = st.navigation(
     {
         "AI":         [PAGES["ai"]],
-        "시장":       [PAGES["market"], PAGES["sectors"], PAGES["sentiment"]],
+        "시장":       [PAGES["market"], PAGES["indices"], PAGES["sectors"], PAGES["sentiment"]],
         "종목":       [PAGES["stock"], PAGES["company"], PAGES["comparestk"], PAGES["dividend"], PAGES["investors"], PAGES["advanced"]],
         "전략":       [PAGES["backtest"], PAGES["compare"], PAGES["optimizer"]],
         "스크리닝":   [PAGES["scanner"], PAGES["dart"], PAGES["timing"]],

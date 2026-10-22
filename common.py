@@ -180,6 +180,35 @@ def chip(label: str) -> None:
     st.markdown(f'<span class="section-chip">{label}</span>', unsafe_allow_html=True)
 
 
+UP_COLOR, DOWN_COLOR = "#ef4444", "#3b82f6"   # 국내 관례: 상승 빨강 / 하락 파랑
+
+
+def quote_cards_html(quotes: list, min_w: int = 160) -> str:
+    """지수·환율 카드 묶음 HTML (화면 폭에 맞춰 자동 줄바꿈)."""
+    from market_index import describe_time
+    cards = []
+    for q in quotes:
+        chg, pct, dec, unit = q["change"], q["pct"], q["dec"], q.get("unit", "")
+        color = UP_COLOR if chg > 0 else DOWN_COLOR if chg < 0 else "#94a3b8"
+        arrow = "▲" if chg > 0 else "▼" if chg < 0 else "-"
+        price = f"{q['price']:,.{dec}f}"
+        price = f"${price}" if unit == "$" else f"{price}{unit}"
+        sub = describe_time(q) + (" · 직전 값" if q.get("stale") else "")
+        cards.append(
+            f'<div style="background:#1a2035; border:1px solid rgba(255,255,255,0.07);'
+            f' border-top:3px solid {color}; border-radius:12px; padding:12px 16px;'
+            f' box-shadow:0 2px 8px rgba(0,0,0,0.3);">'
+            f'<div style="color:#94a3b8; font-size:0.8rem; font-weight:600;">{q["name"]}</div>'
+            f'<div style="color:#f0f4f8; font-size:1.4rem; font-weight:700; margin-top:2px;">{price}</div>'
+            f'<div style="color:{color}; font-size:0.9rem; font-weight:700;">'
+            f'{arrow} {abs(chg):,.{dec}f} ({pct:+.2f}%)</div>'
+            f'<div style="color:#64748b; font-size:0.72rem; margin-top:4px;">{sub}</div>'
+            f'</div>'
+        )
+    return (f'<div style="display:grid; grid-template-columns:repeat(auto-fit, minmax({min_w}px, 1fr));'
+            f' gap:12px; margin-bottom:12px;">{"".join(cards)}</div>')
+
+
 def detect_market(ticker: str) -> bool:
     """6자리 숫자면 국내(KRX), 아니면 미국(US). True=국내."""
     t = ticker.strip()
@@ -350,6 +379,28 @@ def cached_sector(type_: str):
     except Exception:
         data = pd.DataFrame()
     return _with_fallback(f"sector:{type_}", data)
+
+
+@st.cache_data(ttl=60, show_spinner=False)   # 1분 — 지수·환율은 자주 변함
+def cached_market_quotes() -> dict:
+    """지수·환율·시장지표 현재 값 {key: quote}. 일부 항목만 실패하면 그 항목은 직전 값으로 채움."""
+    from market_index import fetch_quotes
+    try:
+        data = fetch_quotes()
+    except Exception:
+        data = {}
+    prev = _LAST_GOOD.get("market_quotes", ({}, 0))[0]
+    if data:
+        for k, q in prev.items():
+            if k not in data:
+                data[k] = {**q, "stale": True}
+    return _with_fallback("market_quotes", data)
+
+
+@st.cache_data(ttl=600, show_spinner=False)   # 10분
+def cached_index_history(key: str, period: str) -> pd.Series:
+    from market_index import fetch_history
+    return fetch_history(key, period)
 
 
 @st.cache_data(ttl=3600)

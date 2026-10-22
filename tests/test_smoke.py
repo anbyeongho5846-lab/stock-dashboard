@@ -46,8 +46,8 @@ MODULES = [
     "common", "analyzer", "ranking", "sector", "ownership", "sentiment",
     "news", "smart_money", "regime", "alt_data", "scanner", "backtester",
     "compare", "optimizer", "fundamental", "dart_screener",
-    "virtual_portfolio", "ai_report",
-    "views.market", "views.sectors", "views.market_sentiment", "views.stock",
+    "virtual_portfolio", "ai_report", "market_index",
+    "views.market", "views.indices", "views.sectors", "views.market_sentiment", "views.stock",
     "views.company", "views.investors", "views.advanced", "views.backtest",
     "views.strategy_compare", "views.ma_optimizer", "views.watchlist_scanner",
     "views.dart", "views.buy_timing", "views.portfolio", "views.ai_assistant",
@@ -110,6 +110,16 @@ def t_sector():
 
 
 check("sector.fetch_sector(upjong)", t_sector)
+
+
+def t_indices():
+    from market_index import fetch_quotes
+    q = fetch_quotes(["KOSPI", "KOSDAQ", "USDKRW"])
+    assert {"KOSPI", "KOSDAQ", "USDKRW"} <= set(q), f"지수·환율 일부 실패: {sorted(q)}"
+    assert q["KOSPI"]["price"] > 0
+
+
+check("market_index.fetch_quotes(KOSPI/KOSDAQ/USDKRW)", t_indices)
 
 
 def t_news():

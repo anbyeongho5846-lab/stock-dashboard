@@ -5,10 +5,46 @@
 페이지 코드는 views/ 폴더에, 공통 헬퍼는 common.py에 있습니다.
 """
 
+import os
+import sys
+import time
+import types
 from pathlib import Path
 
 import streamlit as st
 from PIL import Image
+
+# ── 배포 직후 '옛 모듈' 정리 ──────────────────────────────────────────────────
+# Streamlit은 접속 중인 세션이 있을 때만 바뀐 모듈을 메모리에서 비운다. 접속자가 없을 때
+# 새 코드가 배포되면 옛 common 등이 그대로 남아, 새 페이지가 새 함수를 못 찾고
+# ImportError로 앱 전체가 멈춘다(그동안 'Reboot'로 해결하던 문제).
+# 이 파일(app.py)은 매 실행마다 새로 읽히므로, 여기서 프로젝트 파일이 마지막 확인 이후
+# 바뀌었는지 보고, 바뀌었으면 Streamlit과 같은 방식으로 프로젝트 모듈을 모두 비운다.
+
+_ROOT = os.path.dirname(os.path.abspath(__file__)) + os.sep
+
+
+def _evict_stale_modules() -> None:
+    state = sys.modules.setdefault("_stock_app_state", types.ModuleType("_stock_app_state"))
+    project = {}
+    for name, mod in list(sys.modules.items()):
+        if name == "__main__":
+            continue
+        f = getattr(mod, "__file__", None)
+        if f and os.path.abspath(f).startswith(_ROOT):
+            project[name] = f
+    last = getattr(state, "checked_at", None)
+    try:
+        stale = last is None or any(os.path.getmtime(f) > last for f in project.values())
+    except OSError:
+        stale = True
+    if stale:
+        for name in project:
+            sys.modules.pop(name, None)
+    state.checked_at = time.time()
+
+
+_evict_stale_modules()
 
 # ── 페이지 설정 ───────────────────────────────────────────────────────────────
 
